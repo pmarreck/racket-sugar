@@ -1,0 +1,22 @@
+# Racket compiled files
+compiled/
+*.zo
+*.dep
+
+# macOS
+.DS_Store
+
+# direnv
+.direnv/
+
+# Nix
+result
+result-*
+
+# Performance test logs
+perf-log.tsv
+
+# Editor
+*~
+.#*
+\#*#
