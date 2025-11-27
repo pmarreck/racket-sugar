@@ -176,11 +176,12 @@
        (error (format "Line ~a: Indentation Error. TABS ONLY." line-num))]
       [_ count])))
 
-;; Helper: Check if a symbol is a keyword (starts with :)
+;; Helper: Check if a symbol is a keyword (starts with : and has more chars)
+;; Note: bare ":" is NOT a keyword (used for type annotations in typed racket)
 (define (keyword-symbol? v)
   (and (symbol? v)
        (let ([s (symbol->string v)])
-         (and (> (string-length s) 0)
+         (and (> (string-length s) 1)  ; Must be more than just ":"
               (char=? (string-ref s 0) #\:)))))
 
 ;; Helper: Auto-quote keywords (symbols starting with :) to make them self-evaluating

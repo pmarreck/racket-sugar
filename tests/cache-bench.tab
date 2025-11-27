@@ -1,0 +1,321 @@
+#lang tab-racket
+
+;; Benchmark: ARC vs S3-FIFO Cache Performance
+;; Compares hit rate and operations per second
+
+;; ============================================================================
+;; Common Helpers
+;; ============================================================================
+
+define (vec-remove v elem)
+	define len (pvector-length v)
+	define (loop i acc)
+		if (>= i len)
+			acc
+			let
+				((current (pvector-ref v i)))
+				if (equal? current elem)
+					loop (+ i 1) acc
+					loop (+ i 1) (pvector-push acc current)
+	loop 0 []
+
+define (vec-contains? v elem)
+	define len (pvector-length v)
+	define (loop i)
+		cond
+			(>= i len) #f
+			(equal? (pvector-ref v i) elem) #t
+			else
+				loop (+ i 1)
+	loop 0
+
+define (vec-move-to-end v elem)
+	pvector-push (vec-remove v elem) elem
+
+define (vec-dequeue v)
+	if (pvector-empty? v)
+		v
+		let
+			((len (pvector-length v)))
+			define (loop i acc)
+				if (>= i len)
+					acc
+					loop (+ i 1) (pvector-push acc (pvector-ref v i))
+			loop 1 []
+
+define (vec-peek v)
+	if (pvector-empty? v)
+		#f
+		pvector-ref v 0
+
+;; ============================================================================
+;; ARC Implementation (simplified for benchmark)
+;; ============================================================================
+
+define (arc-make capacity)
+	{:cache {} :t1 [] :t2 [] :b1 [] :b2 [] :p 0 :cap capacity}
+
+define (arc-size c)
+	+ (pvector-length (hamt-ref c :t1)) (pvector-length (hamt-ref c :t2))
+
+define (arc-evict-t1 c)
+	define t1 (hamt-ref c :t1)
+	if (pvector-empty? t1)
+		c
+		let
+			((victim (pvector-ref t1 0)))
+			hamt-set (hamt-set (hamt-set c :t1 (vec-remove t1 victim)) :b1 (pvector-push (hamt-ref c :b1) victim)) :cache (hamt-remove (hamt-ref c :cache) victim)
+
+define (arc-evict-t2 c)
+	define t2 (hamt-ref c :t2)
+	if (pvector-empty? t2)
+		c
+		let
+			((victim (pvector-ref t2 0)))
+			hamt-set (hamt-set (hamt-set c :t2 (vec-remove t2 victim)) :b2 (pvector-push (hamt-ref c :b2) victim)) :cache (hamt-remove (hamt-ref c :cache) victim)
+
+define (arc-replace c key)
+	define t1-len (pvector-length (hamt-ref c :t1))
+	define p (hamt-ref c :p)
+	if (> t1-len p)
+		arc-evict-t1 c
+		arc-evict-t2 c
+
+define (arc-get c key)
+	define t1 (hamt-ref c :t1)
+	define t2 (hamt-ref c :t2)
+	cond
+		(vec-contains? t1 key)
+			{:hit #t :cache (hamt-set (hamt-set c :t1 (vec-remove t1 key)) :t2 (pvector-push t2 key))}
+		(vec-contains? t2 key)
+			{:hit #t :cache (hamt-set c :t2 (vec-move-to-end t2 key))}
+		else
+			{:hit #f :cache c}
+
+define (arc-put c key val)
+	define cap (hamt-ref c :cap)
+	define t1 (hamt-ref c :t1)
+	define b1 (hamt-ref c :b1)
+	define b2 (hamt-ref c :b2)
+	cond
+		(vec-contains? t1 key)
+			hamt-set (hamt-set (hamt-set c :t1 (vec-remove t1 key)) :t2 (pvector-push (hamt-ref c :t2) key)) :cache (hamt-set (hamt-ref c :cache) key val)
+		(vec-contains? b1 key)
+			let
+				((c1 (hamt-set c :p (min cap (+ (hamt-ref c :p) 1)))))
+				define c2 (if (>= (arc-size c1) cap) (arc-replace c1 key) c1)
+				hamt-set (hamt-set (hamt-set c2 :b1 (vec-remove (hamt-ref c2 :b1) key)) :t2 (pvector-push (hamt-ref c2 :t2) key)) :cache (hamt-set (hamt-ref c2 :cache) key val)
+		else
+			let
+				((c1 (if (>= (arc-size c) cap) (arc-replace c key) c)))
+				hamt-set (hamt-set c1 :t1 (pvector-push (hamt-ref c1 :t1) key)) :cache (hamt-set (hamt-ref c1 :cache) key val)
+
+;; ============================================================================
+;; S3-FIFO Implementation (simplified for benchmark)
+;; ============================================================================
+
+define (s3-make capacity)
+	define s-cap (max 1 (quotient capacity 10))
+	{:cache {} :s [] :m [] :freq {} :s-cap s-cap :m-cap (- capacity s-cap)}
+
+define (s3-s-size c)
+	pvector-length (hamt-ref c :s)
+
+define (s3-m-size c)
+	pvector-length (hamt-ref c :m)
+
+define (s3-size c)
+	+ (s3-s-size c) (s3-m-size c)
+
+define (s3-get-freq c key)
+	define fm (hamt-ref c :freq)
+	if (hamt-contains? fm key)
+		hamt-ref fm key
+		0
+
+define (s3-inc-freq c key)
+	hamt-set c :freq (hamt-set (hamt-ref c :freq) key (min 3 (+ (s3-get-freq c key) 1)))
+
+define (s3-evict-m c)
+	define m (hamt-ref c :m)
+	if (pvector-empty? m)
+		c
+		let
+			((victim (vec-peek m)))
+			hamt-set (hamt-set (hamt-set c :m (vec-dequeue m)) :cache (hamt-remove (hamt-ref c :cache) victim)) :freq (hamt-remove (hamt-ref c :freq) victim)
+
+define (s3-evict-s c)
+	define s (hamt-ref c :s)
+	if (pvector-empty? s)
+		c
+		let
+			((victim (vec-peek s)))
+			define freq (s3-get-freq c victim)
+			define c1 (hamt-set c :s (vec-dequeue s))
+			if (> freq 0)
+				let
+					((c2 (if (>= (s3-m-size c1) (hamt-ref c1 :m-cap)) (s3-evict-m c1) c1)))
+					hamt-set (hamt-set c2 :m (pvector-push (hamt-ref c2 :m) victim)) :freq (hamt-set (hamt-ref c2 :freq) victim 0)
+				hamt-set (hamt-set c1 :cache (hamt-remove (hamt-ref c1 :cache) victim)) :freq (hamt-remove (hamt-ref c1 :freq) victim)
+
+define (s3-get c key)
+	if (hamt-contains? (hamt-ref c :cache) key)
+		{:hit #t :cache (s3-inc-freq c key)}
+		{:hit #f :cache c}
+
+define (s3-put c key val)
+	define s (hamt-ref c :s)
+	define m (hamt-ref c :m)
+	cond
+		(vec-contains? s key)
+			hamt-set (s3-inc-freq c key) :cache (hamt-set (hamt-ref c :cache) key val)
+		(vec-contains? m key)
+			hamt-set (s3-inc-freq c key) :cache (hamt-set (hamt-ref c :cache) key val)
+		else
+			let
+				((c1 (if (>= (s3-s-size c) (hamt-ref c :s-cap)) (s3-evict-s c) c)))
+				hamt-set (hamt-set (hamt-set c1 :s (pvector-push (hamt-ref c1 :s) key)) :cache (hamt-set (hamt-ref c1 :cache) key val)) :freq (hamt-set (hamt-ref c1 :freq) key 0)
+
+;; ============================================================================
+;; Benchmark
+;; ============================================================================
+
+;; Generate Zipf-like access pattern (popular keys accessed more often)
+define (zipf-key n max-keys)
+	;; Simple approximation: square root bias toward lower keys
+	define k (exact-floor (expt (random) 2) * max-keys)
+	min k (- max-keys 1)
+
+;; Run benchmark for a cache implementation
+define (run-bench name make-fn get-fn put-fn capacity ops max-keys)
+	displayln (format "~a: capacity=~a, ops=~a, keys=~a" name capacity ops max-keys)
+	define start (current-inexact-milliseconds)
+	define (loop i cache hits)
+		if (>= i ops)
+			{:cache cache :hits hits}
+			let
+				((key (modulo (+ (* i 7) (modulo i 13)) max-keys)))
+				define result (get-fn cache key)
+				define hit (hamt-ref result :hit)
+				define c2 (hamt-ref result :cache)
+				define c3 (if hit c2 (put-fn c2 key i))
+				loop (+ i 1) c3 (if hit (+ hits 1) hits)
+	define result (loop 0 (make-fn capacity) 0)
+	define elapsed (- (current-inexact-milliseconds) start)
+	define hits (hamt-ref result :hits)
+	define hit-rate (* 100.0 (/ hits ops))
+	displayln (format "  Hit rate: ~a% (~a/~a)" (/ (round (* hit-rate 10)) 10.0) hits ops)
+	displayln (format "  Time: ~ams" (round elapsed))
+	displayln (format "  Ops/sec: ~a" (round (* 1000 (/ ops elapsed))))
+	displayln ""
+	hit-rate
+
+;; ============================================================================
+;; Run Benchmarks
+;; ============================================================================
+
+displayln "Cache Benchmark: ARC vs S3-FIFO"
+displayln "================================"
+displayln ""
+
+;; Test 1: Temporal locality (recent keys accessed more)
+displayln "Test 1: Temporal Locality"
+displayln "-------------------------"
+displayln "Keys accessed more if recently used"
+displayln ""
+
+define capacity1 100
+define ops1 5000
+define keys1 200
+
+;; Access pattern biased toward recent keys
+define (pick-recent-key recent keys)
+	if (and (< (random 100) 70) (> (pvector-length recent) 0))
+		pvector-ref recent (random (min 20 (pvector-length recent)))
+		random keys
+
+define (update-recent recent key)
+	if (> (pvector-length recent) 50)
+		pvector-push (vec-dequeue recent) key
+		pvector-push recent key
+
+define (run-temporal name make-fn get-fn put-fn cap ops keys)
+	displayln (format "~a: capacity=~a, ops=~a, keys=~a" name cap ops keys)
+	define start (current-inexact-milliseconds)
+	define (loop i cache hits recent)
+		if (>= i ops)
+			{:cache cache :hits hits}
+			let
+				((key (pick-recent-key recent keys)))
+				define result (get-fn cache key)
+				define hit (hamt-ref result :hit)
+				define c2 (hamt-ref result :cache)
+				define c3 (if hit c2 (put-fn c2 key i))
+				loop (+ i 1) c3 (if hit (+ hits 1) hits) (update-recent recent key)
+	define result (loop 0 (make-fn cap) 0 [])
+	define elapsed (- (current-inexact-milliseconds) start)
+	define hits (hamt-ref result :hits)
+	define hit-rate (* 100.0 (/ hits ops))
+	displayln (format "  Hit rate: ~a% (~a/~a)" (/ (round (* hit-rate 10)) 10.0) hits ops)
+	displayln (format "  Time: ~ams" (round elapsed))
+	displayln ""
+	hit-rate
+
+define arc-rate1 (run-temporal "ARC" arc-make arc-get arc-put capacity1 ops1 keys1)
+define s3-rate1 (run-temporal "S3-FIFO" s3-make s3-get s3-put capacity1 ops1 keys1)
+
+displayln "Test 1 Results:"
+if (> s3-rate1 arc-rate1)
+	displayln (format "  S3-FIFO wins by ~a percentage points" (/ (round (* (- s3-rate1 arc-rate1) 10)) 10.0))
+	displayln (format "  ARC wins by ~a percentage points" (/ (round (* (- arc-rate1 s3-rate1) 10)) 10.0))
+
+displayln ""
+displayln "================================"
+displayln "Test 2: Hot/Cold Access Pattern"
+displayln "--------------------------------"
+displayln "10 hot keys (80% accesses) + many cold keys"
+displayln ""
+
+;; Test 2: Hot/cold pattern
+define capacity2 50
+define ops2 5000
+define hot-keys 10
+define cold-keys 200
+
+define (pick-hotcold-key)
+	if (< (random 100) 80)
+		random hot-keys
+		+ hot-keys (random cold-keys)
+
+define (run-hotcold name make-fn get-fn put-fn cap ops)
+	displayln (format "~a: capacity=~a, ops=~a" name cap ops)
+	define start (current-inexact-milliseconds)
+	define (loop i cache hits)
+		if (>= i ops)
+			{:cache cache :hits hits}
+			let
+				((key (pick-hotcold-key)))
+				define result (get-fn cache key)
+				define hit (hamt-ref result :hit)
+				define c2 (hamt-ref result :cache)
+				define c3 (if hit c2 (put-fn c2 key i))
+				loop (+ i 1) c3 (if hit (+ hits 1) hits)
+	define result (loop 0 (make-fn cap) 0)
+	define elapsed (- (current-inexact-milliseconds) start)
+	define hits (hamt-ref result :hits)
+	define hit-rate (* 100.0 (/ hits ops))
+	displayln (format "  Hit rate: ~a% (~a/~a)" (/ (round (* hit-rate 10)) 10.0) hits ops)
+	displayln (format "  Time: ~ams" (round elapsed))
+	displayln ""
+	hit-rate
+
+define arc-rate2 (run-hotcold "ARC" arc-make arc-get arc-put capacity2 ops2)
+define s3-rate2 (run-hotcold "S3-FIFO" s3-make s3-get s3-put capacity2 ops2)
+
+displayln "Test 2 Results:"
+if (> s3-rate2 arc-rate2)
+	displayln (format "  S3-FIFO wins by ~a percentage points" (/ (round (* (- s3-rate2 arc-rate2) 10)) 10.0))
+	displayln (format "  ARC wins by ~a percentage points" (/ (round (* (- arc-rate2 s3-rate2) 10)) 10.0))
+
+displayln ""
+displayln "Benchmark complete!"

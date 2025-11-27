@@ -1,0 +1,267 @@
+#lang tab-racket
+
+;; S3-FIFO (Simple, Scalable, FIFO-based) Cache Implementation
+;; A simpler, often faster alternative to ARC
+;;
+;; S3-FIFO uses two FIFO queues:
+;;   S (Small) - 10% capacity, filters one-hit-wonders
+;;   M (Main)  - 90% capacity, holds frequently accessed items
+;;
+;; Key insight: Most items are accessed only once. The small queue
+;; filters these "one-hit-wonders" before they pollute the main cache.
+;;
+;; When evicting from S:
+;;   - If item has freq > 0: promote to M, reset freq
+;;   - If item has freq = 0: evict completely
+;;
+;; Paper: "FIFO Queues are All You Need for Cache Eviction" (SOSP 2023)
+
+;; ============================================================================
+;; Helper Functions
+;; ============================================================================
+
+;; Remove first element from vector (FIFO dequeue)
+define (vec-dequeue v)
+	if (pvector-empty? v)
+		v
+		let
+			((len (pvector-length v)))
+			define (loop i acc)
+				if (>= i len)
+					acc
+					loop (+ i 1) (pvector-push acc (pvector-ref v i))
+			loop 1 []
+
+;; Get first element from vector (FIFO peek)
+define (vec-peek v)
+	if (pvector-empty? v)
+		#f
+		pvector-ref v 0
+
+;; Remove specific element from vector
+define (vec-remove v elem)
+	define len (pvector-length v)
+	define (loop i acc)
+		if (>= i len)
+			acc
+			let
+				((current (pvector-ref v i)))
+				if (equal? current elem)
+					loop (+ i 1) acc
+					loop (+ i 1) (pvector-push acc current)
+	loop 0 []
+
+;; Check if element is in vector
+define (vec-contains? v elem)
+	define len (pvector-length v)
+	define (loop i)
+		cond
+			(>= i len) #f
+			(equal? (pvector-ref v i) elem) #t
+			else
+				loop (+ i 1)
+	loop 0
+
+;; ============================================================================
+;; S3-FIFO Core Operations
+;; ============================================================================
+
+;; Create an empty S3-FIFO cache
+;; Structure: {:cache {} :s [] :m [] :freq {} :s-cap n :m-cap n}
+define (make-s3fifo capacity)
+	define s-cap (max 1 (quotient capacity 10))
+	define m-cap (- capacity s-cap)
+	{:cache {} :s [] :m [] :freq {} :s-cap s-cap :m-cap m-cap}
+
+;; Get size of S queue
+define (s-size cache)
+	pvector-length (hamt-ref cache :s)
+
+;; Get size of M queue
+define (m-size cache)
+	pvector-length (hamt-ref cache :m)
+
+;; Total cache size
+define (s3fifo-size cache)
+	+ (s-size cache) (m-size cache)
+
+;; Get frequency count for a key
+define (get-freq cache key)
+	define freq-map (hamt-ref cache :freq)
+	if (hamt-contains? freq-map key)
+		hamt-ref freq-map key
+		0
+
+;; Increment frequency (capped at 3 - don't need more)
+define (inc-freq cache key)
+	define current (get-freq cache key)
+	define new-freq (min 3 (+ current 1))
+	hamt-set cache :freq (hamt-set (hamt-ref cache :freq) key new-freq)
+
+;; Evict from M queue (simple FIFO eviction)
+define (evict-from-m cache)
+	define m (hamt-ref cache :m)
+	if (pvector-empty? m)
+		cache
+		let
+			((victim (vec-peek m)))
+			define new-m (vec-dequeue m)
+			define new-cache-data (hamt-remove (hamt-ref cache :cache) victim)
+			define new-freq (hamt-remove (hamt-ref cache :freq) victim)
+			hamt-set (hamt-set (hamt-set cache :m new-m) :cache new-cache-data) :freq new-freq
+
+;; Evict from S queue - either promote to M or evict completely
+define (evict-from-s cache)
+	define s (hamt-ref cache :s)
+	if (pvector-empty? s)
+		cache
+		let
+			((victim (vec-peek s)))
+			define freq (get-freq cache victim)
+			define new-s (vec-dequeue s)
+			define cache1 (hamt-set cache :s new-s)
+			if (> freq 0)
+				;; Promote to M - item was accessed again
+				let
+					((m-cap (hamt-ref cache1 :m-cap)))
+					;; Make room in M if needed
+					define cache2 (if (>= (m-size cache1) m-cap) (evict-from-m cache1) cache1)
+					;; Add to M with reset frequency
+					define new-m (pvector-push (hamt-ref cache2 :m) victim)
+					define new-freq (hamt-set (hamt-ref cache2 :freq) victim 0)
+					hamt-set (hamt-set cache2 :m new-m) :freq new-freq
+				;; Evict completely - one-hit-wonder
+				let
+					((new-cache-data (hamt-remove (hamt-ref cache1 :cache) victim)))
+					define new-freq (hamt-remove (hamt-ref cache1 :freq) victim)
+					hamt-set (hamt-set cache1 :cache new-cache-data) :freq new-freq
+
+;; ============================================================================
+;; Main API
+;; ============================================================================
+
+;; Get value from cache, returns {:found bool :value v :cache new-cache}
+define (s3fifo-get cache key)
+	define cache-data (hamt-ref cache :cache)
+	define s (hamt-ref cache :s)
+	define m (hamt-ref cache :m)
+	cond
+		;; Found in cache - increment frequency
+		(hamt-contains? cache-data key)
+			let
+				((value (hamt-ref cache-data key)))
+				define new-cache (inc-freq cache key)
+				{:found #t :value value :cache new-cache}
+		;; Not found
+		else
+			{:found #f :value #f :cache cache}
+
+;; Put value into cache
+define (s3fifo-put cache key value)
+	define cache-data (hamt-ref cache :cache)
+	define s (hamt-ref cache :s)
+	define m (hamt-ref cache :m)
+	define s-cap (hamt-ref cache :s-cap)
+	cond
+		;; Key already in S - update value, increment freq
+		(vec-contains? s key)
+			let
+				((new-cache-data (hamt-set cache-data key value)))
+				define cache1 (hamt-set cache :cache new-cache-data)
+				inc-freq cache1 key
+		;; Key already in M - update value, increment freq
+		(vec-contains? m key)
+			let
+				((new-cache-data (hamt-set cache-data key value)))
+				define cache1 (hamt-set cache :cache new-cache-data)
+				inc-freq cache1 key
+		;; New key - add to S queue
+		else
+			;; Make room in S if needed
+			define cache1 (if (>= (s-size cache) s-cap) (evict-from-s cache) cache)
+			;; Add to S with freq 0
+			define new-s (pvector-push (hamt-ref cache1 :s) key)
+			define new-cache-data (hamt-set (hamt-ref cache1 :cache) key value)
+			define new-freq (hamt-set (hamt-ref cache1 :freq) key 0)
+			hamt-set (hamt-set (hamt-set cache1 :s new-s) :cache new-cache-data) :freq new-freq
+
+;; ============================================================================
+;; Demo
+;; ============================================================================
+
+displayln "S3-FIFO Cache Demo"
+displayln "=================="
+displayln ""
+displayln "S3-FIFO uses two FIFO queues:"
+displayln "  S (Small) - filters one-hit-wonders"
+displayln "  M (Main)  - holds frequently accessed items"
+displayln ""
+
+;; Create a cache with capacity 10 (S=1, M=9)
+define cache (make-s3fifo 10)
+displayln "Created S3-FIFO cache with capacity 10"
+displayln (format "  S capacity: ~a" (hamt-ref cache :s-cap))
+displayln (format "  M capacity: ~a" (hamt-ref cache :m-cap))
+
+;; Insert value and immediately access it (so it has freq > 0)
+displayln ""
+displayln "Inserting :a and accessing it..."
+define c1 (s3fifo-put cache :a 1)
+define r1 (s3fifo-get c1 :a)
+define c2 (hamt-ref r1 :cache)
+displayln (format "  :a frequency: ~a" (get-freq c2 :a))
+
+;; Insert :b without accessing (one-hit-wonder)
+displayln ""
+displayln "Inserting :b without re-accessing..."
+define c3 (s3fifo-put c2 :b 2)
+displayln (format "  :b frequency: ~a (one-hit-wonder)" (get-freq c3 :b))
+
+displayln (format "S queue size: ~a" (s-size c3))
+displayln (format "M queue size: ~a" (m-size c3))
+
+;; Now insert :c which will cause S eviction
+;; :a should be promoted to M (freq > 0)
+displayln ""
+displayln "Inserting :c - should trigger S eviction..."
+displayln "  :a (freq=1) should be promoted to M"
+define c4 (s3fifo-put c3 :c 3)
+displayln (format "S queue size: ~a" (s-size c4))
+displayln (format "M queue size: ~a" (m-size c4))
+
+;; Access :b to give it frequency before next eviction
+displayln ""
+displayln "Accessing :b to save it from eviction..."
+define r2 (s3fifo-get c4 :b)
+define c5 (hamt-ref r2 :cache)
+displayln (format "  :b frequency: ~a" (get-freq c5 :b))
+
+;; Insert :d - :b should be promoted
+displayln ""
+displayln "Inserting :d - :b should be promoted to M..."
+define c6 (s3fifo-put c5 :d 4)
+
+;; Insert :e - :c is a one-hit-wonder, will be evicted
+displayln "Inserting :e - :c (one-hit-wonder) should be evicted..."
+define c7 (s3fifo-put c6 :e 5)
+
+displayln ""
+displayln (format "Final S queue size: ~a" (s-size c7))
+displayln (format "Final M queue size: ~a" (m-size c7))
+displayln (format "Final total size: ~a" (s3fifo-size c7))
+
+;; Check what's in cache
+displayln ""
+displayln "Checking cache contents..."
+define check-a (s3fifo-get c7 :a)
+displayln (format "  :a found: ~a (promoted to M)" (hamt-ref check-a :found))
+
+define check-b (s3fifo-get (hamt-ref check-a :cache) :b)
+displayln (format "  :b found: ~a (promoted to M)" (hamt-ref check-b :found))
+
+define check-c (s3fifo-get (hamt-ref check-b :cache) :c)
+displayln (format "  :c found: ~a (evicted as one-hit-wonder)" (hamt-ref check-c :found))
+
+displayln ""
+displayln "Demo complete!"
+displayln "S3-FIFO efficiently filters one-hit-wonders."
