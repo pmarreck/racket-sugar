@@ -329,6 +329,72 @@
          (check-equal? (car def-body) 'hamt))))))
 
 ;; =============================================================================
+;; Self-Evaluating Keyword Tests
+;; =============================================================================
+
+(define self-evaluating-keyword-tests
+  (test-suite
+   "Self-Evaluating Keywords"
+
+   ;; Keywords (symbols starting with :) should be auto-quoted by the reader,
+   ;; making them self-evaluating like in Clojure/Ruby/Elixir.
+   ;; This allows writing (hamt-ref m :key) instead of (hamt-ref m ':key)
+
+   (test-case "Keyword in function call is auto-quoted"
+     ;; (hamt-ref m :key) should parse with :key quoted
+     (let ([result (parse-string "hamt-ref m :key")])
+       ;; Should produce (hamt-ref m ':key) - keyword is quoted
+       ;; Position: 0=hamt-ref, 1=m, 2=:key
+       (check-equal? (caddr (car result)) '':key
+                     "Keyword :key should be auto-quoted in function call")))
+
+   (test-case "Multiple keywords in function call"
+     ;; (hamt-set m :key :value) - both should be quoted
+     (let ([result (parse-string "hamt-set m :key :value")])
+       (let ([expr (car result)])
+         ;; Position: 0=hamt-set, 1=m, 2=:key, 3=:value
+         (check-equal? (list-ref expr 2) '':key)
+         (check-equal? (list-ref expr 3) '':value))))
+
+   (test-case "Keyword as standalone expression"
+     ;; Just :foo by itself should be quoted
+     (let ([result (parse-string ":foo")])
+       (check-equal? (car result) '':foo
+                     "Standalone keyword should be auto-quoted")))
+
+   (test-case "Keyword in nested expression"
+     ;; (eq? x :done) - :done should be quoted
+     ;; Position: 0=eq?, 1=x, 2=:done
+     (let ([result (parse-string "eq? x :done")])
+       (check-equal? (caddr (car result)) '':done)))
+
+   (test-case "Keyword vs regular symbol"
+     ;; :key should be quoted, but key should not
+     (let ([result (parse-string "list :key key")])
+       (let ([expr (car result)])
+         ;; Position: 0=list, 1=:key, 2=key
+         ;; :key is quoted (keyword)
+         (check-equal? (cadr expr) '':key)
+         ;; key is not quoted (variable reference)
+         (check-equal? (caddr expr) 'key))))
+
+   (test-case "Keywords still work in hash literals"
+     ;; {:a 1} should still work - keywords quoted in literals
+     (let ([result (parse-string "define m {:a 1}")])
+       (let ([def-body (caddr (car result))])
+         (check-equal? (car def-body) 'hamt)
+         (check-equal? (cadr def-body) '':a))))
+
+   (test-case "Keywords still work in vector literals"
+     ;; [:a :b :c] - all keywords should be quoted
+     (let ([result (parse-string "define v [:a :b :c]")])
+       (let ([def-body (caddr (car result))])
+         (check-equal? (car def-body) 'pvector)
+         (check-equal? (cadr def-body) '':a)
+         (check-equal? (caddr def-body) '':b)
+         (check-equal? (cadddr def-body) '':c))))))
+
+;; =============================================================================
 ;; Run all tests
 ;; =============================================================================
 
@@ -343,6 +409,7 @@
    error-tests
    integration-tests
    syntax-tests
-   runtime-literal-tests))
+   runtime-literal-tests
+   self-evaluating-keyword-tests))
 
 (run-tests all-tests 'verbose)

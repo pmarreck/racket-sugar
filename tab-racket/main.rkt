@@ -176,13 +176,31 @@
        (error (format "Line ~a: Indentation Error. TABS ONLY." line-num))]
       [_ count])))
 
+;; Helper: Check if a symbol is a keyword (starts with :)
+(define (keyword-symbol? v)
+  (and (symbol? v)
+       (let ([s (symbol->string v)])
+         (and (> (string-length s) 0)
+              (char=? (string-ref s 0) #\:)))))
+
+;; Helper: Auto-quote keywords (symbols starting with :) to make them self-evaluating
+;; This mimics Clojure/Ruby/Elixir behavior where :foo evaluates to itself
+;; Recursively processes nested lists (but not already-quoted forms)
+(define (auto-quote-keyword v)
+  (cond
+    [(keyword-symbol? v) `(quote ,v)]
+    [(and (pair? v) (not (eq? (car v) 'quote)))
+     ;; Recursively process lists (but skip quoted forms)
+     (map auto-quote-keyword v)]
+    [else v]))
+
 (define (tokenize-line str)
   (let ([in (open-input-string str)])
     (let loop ([tokens '()])
       (let ([token (read-with-table in clojure-readtable)])
         (if (eof-object? token)
             (reverse tokens)
-            (loop (cons token tokens)))))))
+            (loop (cons (auto-quote-keyword token) tokens)))))))
 
 (define (split-f-list lst pred)
   (let loop ([l lst] [acc '()])
