@@ -1,13 +1,46 @@
 #lang racket
-(require (only-in racket [read racket-read]))
-(provide read read-syntax)
+(require (only-in racket [read racket-read])
+         (prefix-in hamt: "../../hamt/main.rkt")
+         (prefix-in pv: "../../pvector/main.rkt"))
+
+(provide read read-syntax
+         ;; Re-export HAMT functions for typed code
+         (rename-out [hamt:empty-hamt empty-hamt]
+                     [hamt:hamt hamt]
+                     [hamt:hamt? hamt?]
+                     [hamt:hamt-empty? hamt-empty?]
+                     [hamt:hamt-contains? hamt-contains?]
+                     [hamt:hamt-ref hamt-ref]
+                     [hamt:hamt-set hamt-set]
+                     [hamt:hamt-remove hamt-remove]
+                     [hamt:hamt-count hamt-count]
+                     [hamt:hamt->list hamt->list]
+                     [hamt:list->hamt list->hamt]
+                     [hamt:hamt-keys hamt-keys]
+                     [hamt:hamt-values hamt-values]
+                     [hamt:hamt-fold hamt-fold])
+         ;; Re-export PVector functions for typed code
+         (rename-out [pv:empty-pvector empty-pvector]
+                     [pv:pvector pvector]
+                     [pv:pvector? pvector?]
+                     [pv:pvector-empty? pvector-empty?]
+                     [pv:pvector-ref pvector-ref]
+                     [pv:pvector-set pvector-set]
+                     [pv:pvector-push pvector-push]
+                     [pv:pvector-pop pvector-pop]
+                     [pv:pvector-length pvector-length]
+                     [pv:pvector->list pvector->list]
+                     [pv:pvector->vector pvector->vector]
+                     [pv:list->pvector list->pvector]
+                     [pv:vector->pvector vector->pvector]
+                     [pv:pvector-fold pvector-fold]))
 
 ;; Typed variant - same parser, but wraps in typed/racket module
 
 ;; --- Clojure-style Literal Support ---
-;; [...]  -> immutable vector
+;; [...]  -> persistent vector (PVector)
 ;; ![...] -> mutable vector
-;; {...}  -> immutable hash map
+;; {...}  -> persistent hash map (HAMT)
 ;; !{...} -> mutable hash map
 
 (define (read-delimited-list close-char port readtable)
@@ -36,19 +69,23 @@
        (skip-whitespace-and-comments port)]
       [else (void)])))
 
+;; Reader for [...] -> persistent vector (PVector)
 (define (read-bracket ch port src line col pos)
-  (vector->immutable-vector (list->vector (read-delimited-list #\] port clojure-readtable))))
+  (pv:list->pvector (read-delimited-list #\] port clojure-readtable)))
 
+;; Reader for {...} -> persistent HAMT
 (define (read-brace ch port src line col pos)
   (let ([items (read-delimited-list #\} port clojure-readtable)])
     (unless (even? (length items))
       (error "Hash literal requires even number of elements (key-value pairs)"))
-    (apply hasheq items)))
+    (apply hamt:hamt items)))
 
 (define (maybe-quote v)
   (cond
     [(or (number? v) (string? v) (boolean? v) (char? v)) v]
     [(and (pair? v) (eq? (car v) 'quote)) v]
+    ;; Persistent structures are values, don't quote
+    [(or (hamt:hamt? v) (pv:pvector? v)) v]
     [(or (symbol? v) (pair? v) (vector? v) (hash? v)) `(quote ,v)]
     [else v]))
 
@@ -156,7 +193,36 @@
 (define (read-syntax src in)
   (let* ([lines (read-all-lines in)]
          [body (parse-block lines 0)])
-    ;; Wrap in typed/racket module instead of racket
+    ;; Wrap in typed/racket module with require/typed for persistent structures
     (datum->syntax #f
                    `(module anonymous typed/racket
+                      (require/typed tab-racket/main
+                        ;; HAMT types
+                        [empty-hamt (-> Any)]
+                        [hamt (-> Any * Any)]
+                        [hamt? (-> Any Boolean)]
+                        [hamt-empty? (-> Any Boolean)]
+                        [hamt-contains? (-> Any Any Boolean)]
+                        [hamt-ref (->* (Any Any) (Any) Any)]
+                        [hamt-set (-> Any Any Any Any)]
+                        [hamt-remove (-> Any Any Any)]
+                        [hamt-count (-> Any Integer)]
+                        [hamt->list (-> Any (Listof (Pairof Any Any)))]
+                        [list->hamt (-> (Listof (Pairof Any Any)) Any)]
+                        [hamt-keys (-> Any (Listof Any))]
+                        [hamt-values (-> Any (Listof Any))]
+                        ;; PVector types
+                        [empty-pvector (-> Any)]
+                        [pvector (-> Any * Any)]
+                        [pvector? (-> Any Boolean)]
+                        [pvector-empty? (-> Any Boolean)]
+                        [pvector-ref (->* (Any Integer) (Any) Any)]
+                        [pvector-set (-> Any Integer Any Any)]
+                        [pvector-push (-> Any Any Any)]
+                        [pvector-pop (-> Any Any)]
+                        [pvector-length (-> Any Integer)]
+                        [pvector->list (-> Any (Listof Any))]
+                        [pvector->vector (-> Any (Vectorof Any))]
+                        [list->pvector (-> (Listof Any) Any)]
+                        [vector->pvector (-> (Vectorof Any) Any)])
                       ,@body))))

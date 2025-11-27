@@ -2,7 +2,8 @@
 
 (require rackunit
          rackunit/text-ui
-         tab-racket/main)
+         tab-racket/main
+         (prefix-in hamt: "../hamt/main.rkt"))
 
 ;; Helper to parse a string through the reader
 (define (parse-string str)
@@ -105,38 +106,55 @@
    "Clojure-style Literals"
 
    (test-case "Empty vector"
-     (check-equal? (parse-string "define v []")
-                   '((define v #()))))
+     (let ([result (parse-string "define v []")])
+       (check-equal? (car (car result)) 'define)
+       (check-equal? (cadr (car result)) 'v)
+       (check-true (pvector? (caddr (car result))))
+       (check-true (pvector-empty? (caddr (car result))))))
 
    (test-case "Vector with elements"
-     (check-equal? (parse-string "define v [1 2 3]")
-                   '((define v #(1 2 3)))))
+     (let ([result (parse-string "define v [1 2 3]")])
+       (check-equal? (car (car result)) 'define)
+       (check-equal? (cadr (car result)) 'v)
+       (check-true (pvector? (caddr (car result))))
+       (check-equal? (pvector->list (caddr (car result))) '(1 2 3))))
 
    (test-case "Nested vectors"
-     (check-equal? (parse-string "define v [[1 2] [3 4]]")
-                   '((define v #(#(1 2) #(3 4))))))
+     (let ([result (parse-string "define v [[1 2] [3 4]]")])
+       (check-equal? (car (car result)) 'define)
+       (check-equal? (cadr (car result)) 'v)
+       (check-true (pvector? (caddr (car result))))
+       ;; Inner elements are also PVectors
+       (check-true (pvector? (pvector-ref (caddr (car result)) 0)))
+       (check-equal? (pvector->list (pvector-ref (caddr (car result)) 0)) '(1 2))
+       (check-equal? (pvector->list (pvector-ref (caddr (car result)) 1)) '(3 4))))
 
    (test-case "Empty hash map"
-     (check-equal? (parse-string "define m {}")
-                   `((define m ,(hasheq)))))
+     (let ([result (parse-string "define m {}")])
+       (check-equal? (car (car result)) 'define)
+       (check-equal? (cadr (car result)) 'm)
+       (check-true (hamt:hamt-empty? (caddr (car result))))))
 
    (test-case "Hash map with keyword keys"
      (let ([result (parse-string "define m {:a 1 :b 2}")])
        (check-equal? (car (car result)) 'define)
        (check-equal? (cadr (car result)) 'm)
-       (check-true (hash? (caddr (car result))))
-       (check-equal? (hash-ref (caddr (car result)) ':a) 1)
-       (check-equal? (hash-ref (caddr (car result)) ':b) 2)))
+       (check-true (hamt:hamt? (caddr (car result))))
+       (check-equal? (hamt:hamt-ref (caddr (car result)) ':a) 1)
+       (check-equal? (hamt:hamt-ref (caddr (car result)) ':b) 2)))
 
    (test-case "Vector in hash map"
      (let ([result (parse-string "define m {:items [1 2 3]}")])
-       (check-true (hash? (caddr (car result))))
-       (check-equal? (hash-ref (caddr (car result)) ':items) '#(1 2 3))))
+       (check-true (hamt:hamt? (caddr (car result))))
+       ;; Value is now a PVector, not a Racket vector
+       (check-true (pvector? (hamt:hamt-ref (caddr (car result)) ':items)))
+       (check-equal? (pvector->list (hamt:hamt-ref (caddr (car result)) ':items)) '(1 2 3))))
 
    (test-case "Hash map in vector"
      (let ([result (parse-string "define v [{:a 1} {:b 2}]")])
-       (check-true (vector? (caddr (car result))))
-       (check-true (hash? (vector-ref (caddr (car result)) 0)))))
+       ;; Result is now a PVector, not a Racket vector
+       (check-true (pvector? (caddr (car result))))
+       (check-true (hamt:hamt? (pvector-ref (caddr (car result)) 0)))))
 
    (test-case "Mutable vector syntax ![]"
      (let ([result (parse-string "define v ![1 2 3]")])

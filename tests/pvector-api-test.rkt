@@ -1,0 +1,41 @@
+#lang tab-racket
+
+;; Test PVector API with [] syntax
+;; tab-racket exports pvector-ref, pvector-set, etc.
+
+define v [1 2 3 4 5]
+
+displayln (format "pvector? v: ~a" (pvector? v))
+displayln (format "pvector-length: ~a" (pvector-length v))
+displayln (format "pvector-ref 0: ~a" (pvector-ref v 0))
+displayln (format "pvector-ref 2: ~a" (pvector-ref v 2))
+displayln (format "pvector-ref 4: ~a" (pvector-ref v 4))
+
+;; Update returns new pvector (persistence!)
+define v2 (pvector-set v 2 999)
+displayln "\nAfter pvector-set index 2 to 999:"
+displayln (format "  v2[2]: ~a" (pvector-ref v2 2))
+displayln (format "  original v[2]: ~a" (pvector-ref v 2))
+
+;; Push
+define v3 (pvector-push v 6)
+displayln "\nAfter pvector-push 6:"
+displayln (format "  v3 length: ~a" (pvector-length v3))
+displayln (format "  v3[5]: ~a" (pvector-ref v3 5))
+displayln (format "  original v length: ~a" (pvector-length v))
+
+;; Pop
+define v4 (pvector-pop v)
+displayln "\nAfter pvector-pop:"
+displayln (format "  v4 length: ~a" (pvector-length v4))
+displayln (format "  original v length: ~a" (pvector-length v))
+
+;; Conversion
+displayln "\nConversion:"
+displayln (format "  pvector->list: ~a" (pvector->list v))
+displayln (format "  pvector->vector: ~a" (pvector->vector v))
+
+;; Iteration with in-pvector
+;; Note: use () not [] for for bindings since [] is now pvector syntax
+displayln "\nIteration with for/sum:"
+displayln (format "  sum: ~a" (for/sum ((x (in-pvector v))) x))

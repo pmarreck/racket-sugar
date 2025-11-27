@@ -1,0 +1,88 @@
+#lang tab-racket/typed
+
+;; Simple Counter - Typed Variant
+;; Demonstrates all tab-racket dialect features:
+;; - Persistent hash map syntax {}
+;; - Persistent vector syntax []
+;; - Significant tabbed indentation
+;; - Typed Racket annotations
+
+;; ============================================================================
+;; Type-safe helpers for working with persistent structures
+;; ============================================================================
+
+: get-int (-> Any Integer Integer)
+define (get-int val default)
+	if (exact-integer? val)
+		cast val Integer
+		default
+
+;; ============================================================================
+;; Counter Operations (simple key-value store)
+;; ============================================================================
+
+: counter-inc (-> Any String Any)
+define (counter-inc counter word)
+	define current (hamt-ref counter word 0)
+	hamt-set counter word (+ (get-int current 0) 1)
+
+: counter-get (-> Any String Integer)
+define (counter-get counter word)
+	get-int (hamt-ref counter word 0) 0
+
+;; ============================================================================
+;; Demo
+;; ============================================================================
+
+displayln "Word Counter Demo (Typed)"
+displayln "========================="
+displayln ""
+
+;; Start with empty counter
+define c0 {}
+displayln "Starting with empty counter: {}"
+
+;; Count some words manually
+displayln ""
+displayln "Counting: the, quick, the, fox, the"
+define c1 (counter-inc c0 "the")
+define c2 (counter-inc c1 "quick")
+define c3 (counter-inc c2 "the")
+define c4 (counter-inc c3 "fox")
+define c5 (counter-inc c4 "the")
+
+displayln ""
+displayln (format "Count of 'the': ~a" (counter-get c5 "the"))
+displayln (format "Count of 'quick': ~a" (counter-get c5 "quick"))
+displayln (format "Count of 'fox': ~a" (counter-get c5 "fox"))
+displayln (format "Count of 'missing': ~a" (counter-get c5 "missing"))
+
+;; Show persistence - old counters unchanged
+displayln ""
+displayln "Demonstrating persistence:"
+displayln (format "  c1 'the' count: ~a (after 1st 'the')" (counter-get c1 "the"))
+displayln (format "  c3 'the' count: ~a (after 2nd 'the')" (counter-get c3 "the"))
+displayln (format "  c5 'the' count: ~a (after 3rd 'the')" (counter-get c5 "the"))
+
+;; Demonstrate vector syntax
+displayln ""
+displayln "Vector demo:"
+define words ["hello" "world" "hello"]
+displayln (format "  Words vector: ~a" (pvector->list words))
+displayln (format "  Length: ~a" (pvector-length words))
+displayln (format "  First word: ~a" (pvector-ref words 0))
+
+;; Show that vectors are also persistent
+define words2 (pvector-push words "!")
+displayln (format "  After push '!': ~a" (pvector->list words2))
+displayln (format "  Original unchanged: ~a" (pvector->list words))
+
+displayln ""
+displayln "Demo complete!"
+displayln ""
+displayln "This example demonstrates:"
+displayln "  1. Hash map literals {} and operations"
+displayln "  2. Vector literals [] and operations"
+displayln "  3. Tab-based indentation"
+displayln "  4. Type annotations (: name type)"
+displayln "  5. Persistence (old values unchanged)"

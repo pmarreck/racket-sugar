@@ -1,0 +1,251 @@
+#lang tab-racket
+
+;; ARC (Adaptive Replacement Cache) Implementation
+;; Demonstrates all tab-racket dialect features:
+;; - Persistent hash map syntax {}
+;; - Persistent vector syntax []
+;; - Significant tabbed indentation
+;; See arc-cache-typed.tab for the typed variant
+
+;; ARC is a self-tuning cache algorithm used in ZFS that adaptively
+;; balances between recency (LRU) and frequency (LFU) policies.
+;; It maintains 4 conceptual lists:
+;;   T1 - Recent entries (seen once recently)
+;;   T2 - Frequent entries (seen multiple times)
+;;   B1 - Ghost entries evicted from T1 (track recency misses)
+;;   B2 - Ghost entries evicted from T2 (track frequency misses)
+
+;; ============================================================================
+;; Helper Functions
+;; ============================================================================
+
+;; Remove an element from a vector
+define (vec-remove v elem)
+	define len (pvector-length v)
+	define (loop i acc)
+		if (>= i len)
+			acc
+			let
+				((current (pvector-ref v i)))
+				if (equal? current elem)
+					loop (+ i 1) acc
+					loop (+ i 1) (pvector-push acc current)
+	loop 0 []
+
+;; Check if element is in vector
+define (vec-contains? v elem)
+	define len (pvector-length v)
+	define (loop i)
+		cond
+			(>= i len) #f
+			(equal? (pvector-ref v i) elem) #t
+			else
+				loop (+ i 1)
+	loop 0
+
+;; Move element to end of vector (most recently used position)
+define (vec-move-to-end v elem)
+	pvector-push (vec-remove v elem) elem
+
+;; ============================================================================
+;; ARC Core Operations
+;; ============================================================================
+
+;; Create an empty ARC cache with given capacity
+;; Structure: { "cache" {} "t1" [] "t2" [] "b1" [] "b2" [] "p" 0 "cap" n }
+define (make-arc capacity)
+	;; Build with hamt-set since {} is parsed at read-time
+	hamt-set {"cache" {} "t1" [] "t2" [] "b1" [] "b2" [] "p" 0} "cap" capacity
+
+;; Get total size of T1 + T2 (actual cache)
+define (arc-size arc)
+	+ (pvector-length (hamt-ref arc "t1")) (pvector-length (hamt-ref arc "t2"))
+
+;; Get total size of B1 + B2 (ghost lists)
+define (ghost-size arc)
+	+ (pvector-length (hamt-ref arc "b1")) (pvector-length (hamt-ref arc "b2"))
+
+;; Evict from T1 (move key to B1 ghost list)
+define (evict-from-t1 arc)
+	define t1 (hamt-ref arc "t1")
+	if (pvector-empty? t1)
+		arc
+		let
+			((victim (pvector-ref t1 0)))
+			define new-t1 (vec-remove t1 victim)
+			define new-b1 (pvector-push (hamt-ref arc "b1") victim)
+			define new-cache (hamt-remove (hamt-ref arc "cache") victim)
+			hamt-set (hamt-set (hamt-set arc "t1" new-t1) "b1" new-b1) "cache" new-cache
+
+;; Evict from T2 (move key to B2 ghost list)
+define (evict-from-t2 arc)
+	define t2 (hamt-ref arc "t2")
+	if (pvector-empty? t2)
+		arc
+		let
+			((victim (pvector-ref t2 0)))
+			define new-t2 (vec-remove t2 victim)
+			define new-b2 (pvector-push (hamt-ref arc "b2") victim)
+			define new-cache (hamt-remove (hamt-ref arc "cache") victim)
+			hamt-set (hamt-set (hamt-set arc "t2" new-t2) "b2" new-b2) "cache" new-cache
+
+;; Replace: evict from T1 or T2 based on adaptive parameter p
+define (arc-replace arc key)
+	define t1-len (pvector-length (hamt-ref arc "t1"))
+	define p (hamt-ref arc "p")
+	define in-b2 (vec-contains? (hamt-ref arc "b2") key)
+	cond
+		(and (> t1-len 0) (or (> t1-len p) (and in-b2 (= t1-len p))))
+			evict-from-t1 arc
+		else
+			evict-from-t2 arc
+
+;; Trim ghost lists if they get too large
+define (trim-ghost-lists arc)
+	define capacity (hamt-ref arc "cap")
+	define total (+ (arc-size arc) (ghost-size arc))
+	if (> total (* 2 capacity))
+		let
+			((b1 (hamt-ref arc "b1")) (b2 (hamt-ref arc "b2")))
+			cond
+				(> (pvector-length b1) 0)
+					hamt-set arc "b1" (vec-remove b1 (pvector-ref b1 0))
+				(> (pvector-length b2) 0)
+					hamt-set arc "b2" (vec-remove b2 (pvector-ref b2 0))
+				else arc
+		arc
+
+;; ============================================================================
+;; Main API
+;; ============================================================================
+
+;; Get value from cache, returns {"found" bool "value" v "arc" new-arc}
+define (arc-get arc key)
+	define cache (hamt-ref arc "cache")
+	define t1 (hamt-ref arc "t1")
+	define t2 (hamt-ref arc "t2")
+	cond
+		;; Case 1: Key in T1 - promote to T2 (now a frequent item)
+		(vec-contains? t1 key)
+			let
+				((value (hamt-ref cache key)))
+				define new-t1 (vec-remove t1 key)
+				define new-t2 (pvector-push t2 key)
+				define new-arc (hamt-set (hamt-set arc "t1" new-t1) "t2" new-t2)
+				hamt-set (hamt-set (hamt "found" #t) "value" value) "arc" new-arc
+		;; Case 2: Key in T2 - move to end (most recently used)
+		(vec-contains? t2 key)
+			let
+				((value (hamt-ref cache key)))
+				define new-t2 (vec-move-to-end t2 key)
+				define new-arc (hamt-set arc "t2" new-t2)
+				hamt-set (hamt-set (hamt "found" #t) "value" value) "arc" new-arc
+		;; Case 3: Cache miss
+		else
+			hamt-set (hamt-set (hamt "found" #f) "value" #f) "arc" arc
+
+;; Put value into cache
+define (arc-put arc key value)
+	define capacity (hamt-ref arc "cap")
+	define t1 (hamt-ref arc "t1")
+	define t2 (hamt-ref arc "t2")
+	define b1 (hamt-ref arc "b1")
+	define b2 (hamt-ref arc "b2")
+	define p (hamt-ref arc "p")
+	cond
+		;; Case A: Key already in T1 - promote to T2
+		(vec-contains? t1 key)
+			let
+				((new-cache (hamt-set (hamt-ref arc "cache") key value)))
+				define new-t1 (vec-remove t1 key)
+				define new-t2 (pvector-push t2 key)
+				hamt-set (hamt-set (hamt-set arc "t1" new-t1) "t2" new-t2) "cache" new-cache
+		;; Case B: Key already in T2 - update and move to end
+		(vec-contains? t2 key)
+			let
+				((new-cache (hamt-set (hamt-ref arc "cache") key value)))
+				define new-t2 (vec-move-to-end t2 key)
+				hamt-set (hamt-set arc "t2" new-t2) "cache" new-cache
+		;; Case C: Key in B1 (ghost) - adapt toward recency, add to T2
+		(vec-contains? b1 key)
+			let
+				((delta (max 1 (quotient (pvector-length b2) (max 1 (pvector-length b1))))))
+				define new-p (min capacity (+ p delta))
+				define arc1 (hamt-set arc "p" new-p)
+				define arc2 (if (>= (arc-size arc1) capacity) (arc-replace arc1 key) arc1)
+				define new-b1 (vec-remove (hamt-ref arc2 "b1") key)
+				define new-t2 (pvector-push (hamt-ref arc2 "t2") key)
+				define new-cache (hamt-set (hamt-ref arc2 "cache") key value)
+				trim-ghost-lists (hamt-set (hamt-set (hamt-set arc2 "b1" new-b1) "t2" new-t2) "cache" new-cache)
+		;; Case D: Key in B2 (ghost) - adapt toward frequency, add to T2
+		(vec-contains? b2 key)
+			let
+				((delta (max 1 (quotient (pvector-length b1) (max 1 (pvector-length b2))))))
+				define new-p (max 0 (- p delta))
+				define arc1 (hamt-set arc "p" new-p)
+				define arc2 (if (>= (arc-size arc1) capacity) (arc-replace arc1 key) arc1)
+				define new-b2 (vec-remove (hamt-ref arc2 "b2") key)
+				define new-t2 (pvector-push (hamt-ref arc2 "t2") key)
+				define new-cache (hamt-set (hamt-ref arc2 "cache") key value)
+				trim-ghost-lists (hamt-set (hamt-set (hamt-set arc2 "b2" new-b2) "t2" new-t2) "cache" new-cache)
+		;; Case E: Completely new key - add to T1
+		else
+			let
+				((arc1 (if (>= (arc-size arc) capacity) (arc-replace arc key) arc)))
+				define new-t1 (pvector-push (hamt-ref arc1 "t1") key)
+				define new-cache (hamt-set (hamt-ref arc1 "cache") key value)
+				trim-ghost-lists (hamt-set (hamt-set arc1 "t1" new-t1) "cache" new-cache)
+
+;; ============================================================================
+;; Demo
+;; ============================================================================
+
+displayln "ARC Cache Demo"
+displayln "=============="
+displayln ""
+
+;; Create a small cache for demonstration
+define cache (make-arc 3)
+displayln "Created ARC cache with capacity 3"
+
+;; Insert some values
+displayln ""
+displayln "Inserting keys a, b, c, d, e..."
+define c1 (arc-put cache "a" 1)
+define c2 (arc-put c1 "b" 2)
+define c3 (arc-put c2 "c" 3)
+define c4 (arc-put c3 "d" 4)
+define c5 (arc-put c4 "e" 5)
+
+displayln ""
+displayln (format "Cache size after 5 inserts (capacity 3): ~a" (arc-size c5))
+displayln (format "T1 length: ~a" (pvector-length (hamt-ref c5 "t1")))
+displayln (format "T2 length: ~a" (pvector-length (hamt-ref c5 "t2")))
+displayln (format "B1 ghost length: ~a" (pvector-length (hamt-ref c5 "b1")))
+displayln (format "Adaptive parameter p: ~a" (hamt-ref c5 "p"))
+
+;; Access some keys to promote them
+displayln ""
+displayln "Accessing 'd' twice to promote it..."
+define r1 (arc-get c5 "d")
+define c6 (hamt-ref r1 "arc")
+define r2 (arc-get c6 "d")
+define c7 (hamt-ref r2 "arc")
+
+displayln (format "T2 now contains 'd': ~a" (vec-contains? (hamt-ref c7 "t2") "d"))
+
+;; Try to get an evicted key
+displayln ""
+displayln "Looking for 'a' (should be evicted)..."
+define r3 (arc-get c7 "a")
+displayln (format "Found 'a': ~a" (hamt-ref r3 "found"))
+
+;; Re-insert 'a' - since it's in B1, p should adapt
+displayln ""
+displayln "Re-inserting 'a' (was in ghost list B1)..."
+define c8 (arc-put (hamt-ref r3 "arc") "a" 100)
+displayln (format "New adaptive parameter p: ~a" (hamt-ref c8 "p"))
+displayln (format "'a' now in T2 (promoted): ~a" (vec-contains? (hamt-ref c8 "t2") "a"))
+
+displayln ""
+displayln "Demo complete! ARC adapts based on access patterns."

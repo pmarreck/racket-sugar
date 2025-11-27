@@ -1,12 +1,45 @@
 #lang racket
-(require (only-in racket [read racket-read]))
-(provide read read-syntax)
+(require (only-in racket [read racket-read])
+         (prefix-in hamt: "../hamt/main.rkt")
+         (prefix-in pv: "../pvector/main.rkt"))
+(provide read read-syntax
+         ;; Re-export HAMT functions for users
+         (rename-out [hamt:empty-hamt empty-hamt]
+                     [hamt:hamt hamt]
+                     [hamt:hamt? hamt?]
+                     [hamt:hamt-empty? hamt-empty?]
+                     [hamt:hamt-contains? hamt-contains?]
+                     [hamt:hamt-ref hamt-ref]
+                     [hamt:hamt-set hamt-set]
+                     [hamt:hamt-remove hamt-remove]
+                     [hamt:hamt-count hamt-count]
+                     [hamt:hamt->list hamt->list]
+                     [hamt:list->hamt list->hamt]
+                     [hamt:hamt-keys hamt-keys]
+                     [hamt:hamt-values hamt-values]
+                     [hamt:hamt-fold hamt-fold])
+         ;; Re-export PVector functions for users
+         (rename-out [pv:empty-pvector empty-pvector]
+                     [pv:pvector pvector]
+                     [pv:pvector? pvector?]
+                     [pv:pvector-empty? pvector-empty?]
+                     [pv:pvector-ref pvector-ref]
+                     [pv:pvector-set pvector-set]
+                     [pv:pvector-push pvector-push]
+                     [pv:pvector-pop pvector-pop]
+                     [pv:pvector-length pvector-length]
+                     [pv:pvector->list pvector->list]
+                     [pv:pvector->vector pvector->vector]
+                     [pv:list->pvector list->pvector]
+                     [pv:vector->pvector vector->pvector]
+                     [pv:pvector-fold pvector-fold]
+                     [pv:in-pvector in-pvector]))
 
 ;; --- Clojure-style Literal Support ---
-;; [...]  -> immutable vector
+;; [...]  -> persistent vector (pvector)
 ;; ![...] -> mutable vector
-;; {...}  -> immutable hash map
-;; !{...} -> mutable hash map
+;; {...}  -> persistent HAMT (Hash Array Mapped Trie)
+;; !{...} -> mutable hash map (hasheq)
 
 ;; Read until closing delimiter, using our custom readtable
 (define (read-delimited-list close-char port readtable)
@@ -35,16 +68,16 @@
        (skip-whitespace-and-comments port)]
       [else (void)])))
 
-;; Reader for [...] -> immutable vector
+;; Reader for [...] -> persistent vector
 (define (read-bracket ch port src line col pos)
-  (vector->immutable-vector (list->vector (read-delimited-list #\] port clojure-readtable))))
+  (pv:list->pvector (read-delimited-list #\] port clojure-readtable)))
 
-;; Reader for {...} -> immutable hash
+;; Reader for {...} -> persistent HAMT
 (define (read-brace ch port src line col pos)
   (let ([items (read-delimited-list #\} port clojure-readtable)])
     (unless (even? (length items))
       (error "Hash literal requires even number of elements (key-value pairs)"))
-    (apply hasheq items)))
+    (apply hamt:hamt items)))
 
 ;; Helper: quote a value if it needs quoting (symbols need quotes, literals don't)
 (define (maybe-quote v)
@@ -177,6 +210,8 @@
   (let* ([lines (read-all-lines in)]
          [body (parse-block lines 0)])
     ;; Wrap the parsed body in a module definition
+    ;; Include tab-racket bindings (HAMT, etc.)
     (datum->syntax #f
                    `(module anonymous racket
+                      (require tab-racket/main)
                       ,@body))))

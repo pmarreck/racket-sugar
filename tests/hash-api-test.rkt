@@ -1,0 +1,27 @@
+#lang tab-racket
+
+;; Test HAMT API with {} syntax
+;; tab-racket exports hamt-ref, hamt-set, etc.
+
+define m {"name" "Alice" "age" 30}
+
+displayln (format "hamt-ref name: ~a" (hamt-ref m "name"))
+displayln (format "hamt-ref age: ~a" (hamt-ref m "age"))
+displayln (format "hamt-count: ~a" (hamt-count m))
+displayln (format "hamt-contains? name: ~a" (hamt-contains? m "name"))
+displayln (format "hamt-contains? foo: ~a" (hamt-contains? m "foo"))
+displayln (format "hamt-keys: ~a" (hamt-keys m))
+displayln (format "hamt-values: ~a" (hamt-values m))
+
+;; Update returns new HAMT (persistence!)
+define m2 (hamt-set m "city" "NYC")
+displayln "\nAfter hamt-set city NYC:"
+displayln (format "  m2 has city: ~a" (hamt-ref m2 "city"))
+displayln (format "  original m keys: ~a" (hamt-keys m))
+displayln (format "  m2 keys: ~a" (hamt-keys m2))
+
+;; Remove
+define m3 (hamt-remove m "age")
+displayln "\nAfter hamt-remove age:"
+displayln (format "  m3 keys: ~a" (hamt-keys m3))
+displayln (format "  original m still has age: ~a" (hamt-contains? m "age"))
