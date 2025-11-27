@@ -105,56 +105,66 @@
   (test-suite
    "Clojure-style Literals"
 
+   ;; NOTE: [] and {} now produce runtime expressions (pvector ...) and (hamt ...)
+   ;; rather than read-time literal values. This allows variables to work inside literals.
+
    (test-case "Empty vector"
      (let ([result (parse-string "define v []")])
        (check-equal? (car (car result)) 'define)
        (check-equal? (cadr (car result)) 'v)
-       (check-true (pvector? (caddr (car result))))
-       (check-true (pvector-empty? (caddr (car result))))))
+       ;; Should produce (pvector) expression
+       (check-equal? (caddr (car result)) '(pvector))))
 
    (test-case "Vector with elements"
      (let ([result (parse-string "define v [1 2 3]")])
        (check-equal? (car (car result)) 'define)
        (check-equal? (cadr (car result)) 'v)
-       (check-true (pvector? (caddr (car result))))
-       (check-equal? (pvector->list (caddr (car result))) '(1 2 3))))
+       ;; Should produce (pvector 1 2 3) expression
+       (check-equal? (caddr (car result)) '(pvector 1 2 3))))
 
    (test-case "Nested vectors"
      (let ([result (parse-string "define v [[1 2] [3 4]]")])
        (check-equal? (car (car result)) 'define)
        (check-equal? (cadr (car result)) 'v)
-       (check-true (pvector? (caddr (car result))))
-       ;; Inner elements are also PVectors
-       (check-true (pvector? (pvector-ref (caddr (car result)) 0)))
-       (check-equal? (pvector->list (pvector-ref (caddr (car result)) 0)) '(1 2))
-       (check-equal? (pvector->list (pvector-ref (caddr (car result)) 1)) '(3 4))))
+       ;; Should produce nested (pvector ...) expressions
+       (let ([def-body (caddr (car result))])
+         (check-equal? (car def-body) 'pvector)
+         (check-equal? (cadr def-body) '(pvector 1 2))
+         (check-equal? (caddr def-body) '(pvector 3 4)))))
 
    (test-case "Empty hash map"
      (let ([result (parse-string "define m {}")])
        (check-equal? (car (car result)) 'define)
        (check-equal? (cadr (car result)) 'm)
-       (check-true (hamt:hamt-empty? (caddr (car result))))))
+       ;; Should produce (hamt) expression
+       (check-equal? (caddr (car result)) '(hamt))))
 
    (test-case "Hash map with keyword keys"
      (let ([result (parse-string "define m {:a 1 :b 2}")])
        (check-equal? (car (car result)) 'define)
        (check-equal? (cadr (car result)) 'm)
-       (check-true (hamt:hamt? (caddr (car result))))
-       (check-equal? (hamt:hamt-ref (caddr (car result)) ':a) 1)
-       (check-equal? (hamt:hamt-ref (caddr (car result)) ':b) 2)))
+       ;; Should produce (hamt ':a 1 ':b 2) - keywords are quoted
+       (let ([def-body (caddr (car result))])
+         (check-equal? (car def-body) 'hamt)
+         (check-equal? (cadr def-body) '':a)
+         (check-equal? (caddr def-body) 1)
+         (check-equal? (cadddr def-body) '':b))))
 
    (test-case "Vector in hash map"
      (let ([result (parse-string "define m {:items [1 2 3]}")])
-       (check-true (hamt:hamt? (caddr (car result))))
-       ;; Value is now a PVector, not a Racket vector
-       (check-true (pvector? (hamt:hamt-ref (caddr (car result)) ':items)))
-       (check-equal? (pvector->list (hamt:hamt-ref (caddr (car result)) ':items)) '(1 2 3))))
+       ;; Should produce (hamt ':items (pvector 1 2 3))
+       (let ([def-body (caddr (car result))])
+         (check-equal? (car def-body) 'hamt)
+         (check-equal? (cadr def-body) '':items)
+         (check-equal? (caddr def-body) '(pvector 1 2 3)))))
 
    (test-case "Hash map in vector"
      (let ([result (parse-string "define v [{:a 1} {:b 2}]")])
-       ;; Result is now a PVector, not a Racket vector
-       (check-true (pvector? (caddr (car result))))
-       (check-true (hamt:hamt? (pvector-ref (caddr (car result)) 0)))))
+       ;; Should produce (pvector (hamt ':a 1) (hamt ':b 2))
+       (let ([def-body (caddr (car result))])
+         (check-equal? (car def-body) 'pvector)
+         (check-equal? (car (cadr def-body)) 'hamt)
+         (check-equal? (car (caddr def-body)) 'hamt))))
 
    (test-case "Mutable vector syntax ![]"
      (let ([result (parse-string "define v ![1 2 3]")])
@@ -255,6 +265,70 @@
      (check-equal? (caddr result) 'racket))))
 
 ;; =============================================================================
+;; Runtime Variable Evaluation Tests
+;; =============================================================================
+
+(define runtime-literal-tests
+  (test-suite
+   "Runtime Variable Evaluation in Literals"
+
+   ;; These tests verify that variables inside {} and [] are evaluated at runtime,
+   ;; not captured as symbols at read-time.
+
+   (test-case "Variable in hash map literal - should produce runtime expression"
+     ;; When we write {:key x} where x is a variable, it should parse to
+     ;; a form that evaluates x at runtime, not store the symbol 'x
+     (let ([result (parse-string "define m {:val x}")])
+       ;; The value should be a runtime expression, not a literal HAMT
+       ;; After the fix, this should produce (define m (hamt ':val x))
+       ;; Currently it produces a literal HAMT with 'x as the value (FAILS)
+       (let ([def-body (caddr (car result))])
+         ;; Should be a list starting with 'hamt (runtime expression)
+         (check-true (list? def-body)
+                     "Hash literal with variable should produce a list expression")
+         (check-equal? (car def-body) 'hamt
+                       "Should produce (hamt ...) form for runtime evaluation"))))
+
+   (test-case "Variable in vector literal - should produce runtime expression"
+     ;; When we write [x y z] where these are variables, it should parse to
+     ;; a form that evaluates them at runtime
+     (let ([result (parse-string "define v [a b c]")])
+       (let ([def-body (caddr (car result))])
+         ;; Should be a list starting with 'pvector (runtime expression)
+         (check-true (list? def-body)
+                     "Vector literal with variables should produce a list expression")
+         (check-equal? (car def-body) 'pvector
+                       "Should produce (pvector ...) form for runtime evaluation"))))
+
+   (test-case "Mixed literals and variables in hash map"
+     ;; {:a 1 :b x} should evaluate x but keep 1 as literal
+     (let ([result (parse-string "define m {:a 1 :b x}")])
+       (let ([def-body (caddr (car result))])
+         (check-true (list? def-body))
+         (check-equal? (car def-body) 'hamt))))
+
+   (test-case "Mixed literals and variables in vector"
+     ;; [1 x 3] should evaluate x but keep 1 and 3 as literals
+     (let ([result (parse-string "define v [1 x 3]")])
+       (let ([def-body (caddr (car result))])
+         (check-true (list? def-body))
+         (check-equal? (car def-body) 'pvector))))
+
+   (test-case "Nested structures with variables"
+     ;; {:items [x y]} should produce nested runtime expressions
+     (let ([result (parse-string "define m {:items [x y]}")])
+       (let ([def-body (caddr (car result))])
+         (check-true (list? def-body))
+         (check-equal? (car def-body) 'hamt))))
+
+   (test-case "Function call result in literal"
+     ;; {:result (+ 1 2)} should evaluate the expression
+     (let ([result (parse-string "define m {:result (+ 1 2)}")])
+       (let ([def-body (caddr (car result))])
+         (check-true (list? def-body))
+         (check-equal? (car def-body) 'hamt))))))
+
+;; =============================================================================
 ;; Run all tests
 ;; =============================================================================
 
@@ -268,6 +342,7 @@
    string-tests
    error-tests
    integration-tests
-   syntax-tests))
+   syntax-tests
+   runtime-literal-tests))
 
 (run-tests all-tests 'verbose)

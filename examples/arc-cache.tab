@@ -53,9 +53,9 @@ define (vec-move-to-end v elem)
 
 ;; Create an empty ARC cache with given capacity
 ;; Structure: { "cache" {} "t1" [] "t2" [] "b1" [] "b2" [] "p" 0 "cap" n }
+;; Note: Variables like 'capacity' now work directly in {} literals!
 define (make-arc capacity)
-	;; Build with hamt-set since {} is parsed at read-time
-	hamt-set {"cache" {} "t1" [] "t2" [] "b1" [] "b2" [] "p" 0} "cap" capacity
+	{"cache" {} "t1" [] "t2" [] "b1" [] "b2" [] "p" 0 "cap" capacity}
 
 ;; Get total size of T1 + T2 (actual cache)
 define (arc-size arc)

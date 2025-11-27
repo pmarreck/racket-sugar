@@ -69,16 +69,41 @@
        (skip-whitespace-and-comments port)]
       [else (void)])))
 
-;; Reader for [...] -> persistent vector (PVector)
-(define (read-bracket ch port src line col pos)
-  (pv:list->pvector (read-delimited-list #\] port clojure-readtable)))
+;; Helper: prepare a value for runtime evaluation
+;; - Keywords (symbols starting with :) are quoted so they stay as symbols
+;; - Other symbols are left unquoted so they're evaluated as variables
+;; - Numbers, strings, booleans stay as-is (self-evaluating)
+;; - Nested structures (lists from [] or {}) are left as-is (already runtime exprs)
+(define (prepare-for-runtime v)
+  (cond
+    [(and (symbol? v)
+          (let ([s (symbol->string v)])
+            (and (> (string-length s) 0)
+                 (char=? (string-ref s 0) #\:))))
+     ;; Keyword-style symbol - quote it
+     `(quote ,v)]
+    [(or (number? v) (string? v) (boolean? v) (char? v))
+     ;; Self-evaluating literals
+     v]
+    [(and (pair? v) (memq (car v) '(quote pvector hamt vector make-hasheq)))
+     ;; Already a runtime expression or quoted
+     v]
+    [(symbol? v)
+     ;; Regular symbol - leave unquoted for variable reference
+     v]
+    [else v]))
 
-;; Reader for {...} -> persistent HAMT
+;; Reader for [...] -> persistent vector (runtime expression)
+(define (read-bracket ch port src line col pos)
+  (let ([items (read-delimited-list #\] port clojure-readtable)])
+    `(pvector ,@(map prepare-for-runtime items))))
+
+;; Reader for {...} -> persistent HAMT (runtime expression)
 (define (read-brace ch port src line col pos)
   (let ([items (read-delimited-list #\} port clojure-readtable)])
     (unless (even? (length items))
       (error "Hash literal requires even number of elements (key-value pairs)"))
-    (apply hamt:hamt items)))
+    `(hamt ,@(map prepare-for-runtime items))))
 
 (define (maybe-quote v)
   (cond
