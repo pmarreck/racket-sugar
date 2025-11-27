@@ -1,0 +1,222 @@
+#lang tab-racket/typed
+
+;; S3-FIFO (Simple, Scalable, FIFO-based) Cache Implementation - Typed Variant
+;; A simpler, often faster alternative to ARC
+;;
+;; S3-FIFO uses two FIFO queues:
+;;   S (Small) - 10% capacity, filters one-hit-wonders
+;;   M (Main)  - 90% capacity, holds frequently accessed items
+;;
+;; Paper: "FIFO Queues are All You Need for Cache Eviction" (SOSP 2023)
+
+;; ============================================================================
+;; Type-safe helpers
+;; ============================================================================
+
+: get-int (-> Any Integer Integer)
+define (get-int val default)
+	if (exact-integer? val)
+		cast val Integer
+		default
+
+;; ============================================================================
+;; Helper Functions
+;; ============================================================================
+
+;; Remove first element from vector (FIFO dequeue)
+: vec-dequeue (-> Any Any)
+define (vec-dequeue v)
+	if (pvector-empty? v)
+		v
+		let
+			((len (pvector-length v)))
+			: loop (-> Integer Any Any)
+			define (loop i acc)
+				if (>= i len)
+					acc
+					loop (+ i 1) (pvector-push acc (pvector-ref v i))
+			loop 1 []
+
+;; Get first element from vector (FIFO peek)
+: vec-peek (-> Any Any)
+define (vec-peek v)
+	if (pvector-empty? v)
+		#f
+		pvector-ref v 0
+
+;; Remove specific element from vector
+: vec-remove (-> Any Any Any)
+define (vec-remove v elem)
+	define len (pvector-length v)
+	: loop (-> Integer Any Any)
+	define (loop i acc)
+		if (>= i len)
+			acc
+			let
+				((current (pvector-ref v i)))
+				if (equal? current elem)
+					loop (+ i 1) acc
+					loop (+ i 1) (pvector-push acc current)
+	loop 0 []
+
+;; Check if element is in vector
+: vec-contains? (-> Any Any Boolean)
+define (vec-contains? v elem)
+	define len (pvector-length v)
+	: loop (-> Integer Boolean)
+	define (loop i)
+		cond
+			(>= i len) #f
+			(equal? (pvector-ref v i) elem) #t
+			else
+				loop (+ i 1)
+	loop 0
+
+;; ============================================================================
+;; S3-FIFO Core Operations
+;; ============================================================================
+
+;; Create an empty S3-FIFO cache
+: make-s3fifo (-> Integer Any)
+define (make-s3fifo capacity)
+	define s-cap (max 1 (quotient capacity 10))
+	define m-cap (- capacity s-cap)
+	{:cache {} :s [] :m [] :freq {} :s-cap s-cap :m-cap m-cap}
+
+;; Get size of S queue
+: s-size (-> Any Integer)
+define (s-size cache)
+	pvector-length (hamt-ref cache :s)
+
+;; Get size of M queue
+: m-size (-> Any Integer)
+define (m-size cache)
+	pvector-length (hamt-ref cache :m)
+
+;; Total cache size
+: s3fifo-size (-> Any Integer)
+define (s3fifo-size cache)
+	+ (s-size cache) (m-size cache)
+
+;; Get frequency count for a key
+: get-freq (-> Any Any Integer)
+define (get-freq cache key)
+	define freq-map (hamt-ref cache :freq)
+	if (hamt-contains? freq-map key)
+		get-int (hamt-ref freq-map key) 0
+		0
+
+;; Increment frequency (capped at 3)
+: inc-freq (-> Any Any Any)
+define (inc-freq cache key)
+	define current (get-freq cache key)
+	define new-freq (min 3 (+ current 1))
+	hamt-set cache :freq (hamt-set (hamt-ref cache :freq) key new-freq)
+
+;; Evict from M queue (simple FIFO eviction)
+: evict-from-m (-> Any Any)
+define (evict-from-m cache)
+	define m (hamt-ref cache :m)
+	if (pvector-empty? m)
+		cache
+		let
+			((victim (vec-peek m)))
+			define new-m (vec-dequeue m)
+			define new-cache-data (hamt-remove (hamt-ref cache :cache) victim)
+			define new-freq (hamt-remove (hamt-ref cache :freq) victim)
+			hamt-set (hamt-set (hamt-set cache :m new-m) :cache new-cache-data) :freq new-freq
+
+;; Evict from S queue - either promote to M or evict completely
+: evict-from-s (-> Any Any)
+define (evict-from-s cache)
+	define s (hamt-ref cache :s)
+	if (pvector-empty? s)
+		cache
+		let
+			((victim (vec-peek s)))
+			define freq (get-freq cache victim)
+			define new-s (vec-dequeue s)
+			define cache1 (hamt-set cache :s new-s)
+			if (> freq 0)
+				let
+					((m-cap-val (get-int (hamt-ref cache1 :m-cap) 0)))
+					define cache2 (if (>= (m-size cache1) m-cap-val) (evict-from-m cache1) cache1)
+					define new-m (pvector-push (hamt-ref cache2 :m) victim)
+					define new-freq (hamt-set (hamt-ref cache2 :freq) victim 0)
+					hamt-set (hamt-set cache2 :m new-m) :freq new-freq
+				let
+					((new-cache-data (hamt-remove (hamt-ref cache1 :cache) victim)))
+					define new-freq (hamt-remove (hamt-ref cache1 :freq) victim)
+					hamt-set (hamt-set cache1 :cache new-cache-data) :freq new-freq
+
+;; ============================================================================
+;; Main API
+;; ============================================================================
+
+;; Get value from cache
+: s3fifo-get (-> Any Any Any)
+define (s3fifo-get cache key)
+	define cache-data (hamt-ref cache :cache)
+	if (hamt-contains? cache-data key)
+		let
+			((value (hamt-ref cache-data key)))
+			define new-cache (inc-freq cache key)
+			{:found #t :value value :cache new-cache}
+		{:found #f :value #f :cache cache}
+
+;; Put value into cache
+: s3fifo-put (-> Any Any Any Any)
+define (s3fifo-put cache key value)
+	define cache-data (hamt-ref cache :cache)
+	define s (hamt-ref cache :s)
+	define m (hamt-ref cache :m)
+	define s-cap-val (get-int (hamt-ref cache :s-cap) 1)
+	cond
+		(vec-contains? s key)
+			let
+				((new-cache-data (hamt-set cache-data key value)))
+				define cache1 (hamt-set cache :cache new-cache-data)
+				inc-freq cache1 key
+		(vec-contains? m key)
+			let
+				((new-cache-data (hamt-set cache-data key value)))
+				define cache1 (hamt-set cache :cache new-cache-data)
+				inc-freq cache1 key
+		else
+			define cache1 (if (>= (s-size cache) s-cap-val) (evict-from-s cache) cache)
+			define new-s (pvector-push (hamt-ref cache1 :s) key)
+			define new-cache-data (hamt-set (hamt-ref cache1 :cache) key value)
+			define new-freq (hamt-set (hamt-ref cache1 :freq) key 0)
+			hamt-set (hamt-set (hamt-set cache1 :s new-s) :cache new-cache-data) :freq new-freq
+
+;; ============================================================================
+;; Demo
+;; ============================================================================
+
+displayln "S3-FIFO Cache Demo (Typed)"
+displayln "=========================="
+displayln ""
+
+define cache (make-s3fifo 10)
+displayln "Created S3-FIFO cache with capacity 10"
+displayln (format "  S capacity: ~a" (hamt-ref cache :s-cap))
+displayln (format "  M capacity: ~a" (hamt-ref cache :m-cap))
+
+displayln ""
+displayln "Inserting :a and accessing it..."
+define c1 (s3fifo-put cache :a 1)
+define r1 (s3fifo-get c1 :a)
+define c2 (hamt-ref r1 :cache)
+displayln (format "  :a frequency: ~a" (get-freq c2 :a))
+
+displayln ""
+displayln "Inserting :b (one-hit-wonder)..."
+define c3 (s3fifo-put c2 :b 2)
+displayln (format "  :b frequency: ~a" (get-freq c3 :b))
+
+displayln ""
+displayln (format "S queue size: ~a" (s-size c3))
+displayln (format "M queue size: ~a" (m-size c3))
+
+displayln ""
+displayln "Demo complete! S3-FIFO with type safety."

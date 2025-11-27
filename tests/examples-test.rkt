@@ -78,7 +78,25 @@
      (check-true (string-contains? output ":a now in T2 (promoted): #t")
                  "arc-cache.tab should promote ghost list hits")
      (check-true (string-contains? output "Demo complete!")
-                 "arc-cache.tab should complete successfully"))))
+                 "arc-cache.tab should complete successfully"))
+
+   (test-case "arc-cache-typed.tab runs"
+     (define-values (output errors exit-code) (run-example "examples/arc-cache-typed.tab"))
+     (check-equal? exit-code 0 "arc-cache-typed.tab should exit cleanly")
+     (check-true (string-contains? output "ARC Cache Demo (Typed)")
+                 "arc-cache-typed.tab should print typed demo header"))
+
+   (test-case "s3fifo-cache.tab runs"
+     (define-values (output errors exit-code) (run-example "examples/s3fifo-cache.tab"))
+     (check-equal? exit-code 0 "s3fifo-cache.tab should exit cleanly")
+     (check-true (string-contains? output "S3-FIFO Cache Demo")
+                 "s3fifo-cache.tab should print demo header"))
+
+   (test-case "s3fifo-cache-typed.tab runs"
+     (define-values (output errors exit-code) (run-example "examples/s3fifo-cache-typed.tab"))
+     (check-equal? exit-code 0 "s3fifo-cache-typed.tab should exit cleanly")
+     (check-true (string-contains? output "S3-FIFO Cache Demo (Typed)")
+                 "s3fifo-cache-typed.tab should print typed demo header"))))
 
 ;; =============================================================================
 ;; Run all tests
