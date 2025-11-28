@@ -11,7 +11,9 @@ A Racket language variant that uses significant **tab-based indentation** instea
 - **Tab-based significant indentation** - Structure code without parentheses
 - **Persistent vectors** - `[]` creates immutable, structurally-shared vectors with O(log32 n) operations
 - **Persistent hash maps** - `{}` creates HAMTs (Hash Array Mapped Tries) with O(log64 n) operations
-- **Typed Racket support** - Full type annotations available for both data structures
+- **Self-evaluating keywords** - `:foo` symbols auto-evaluate like Clojure/Ruby/Elixir atoms
+- **Typed Racket support** - `#lang tab-racket/typed` for full type annotations
+- **File extension** - Use `.trk` ("tabbed racket") for tab-racket source files
 
 ```
 #lang tab-racket
@@ -76,7 +78,7 @@ displayln "Hello, tabs!"
 Run it with Racket:
 
 ```bash
-racket hello.tab
+racket hello.trk
 ```
 
 ## Syntax Rules
@@ -149,6 +151,28 @@ vector-set! mutable-vec 0 99
 ```
 
 Note: Since `[]` now creates persistent vectors, use parentheses `()` for list operations like let bindings.
+
+### Self-Evaluating Keywords
+
+Keywords (symbols starting with `:`) are automatically self-evaluating, like atoms in Clojure, Ruby, or Elixir:
+
+```
+#lang tab-racket
+
+;; Keywords evaluate to themselves - no quoting needed!
+define person {:name "Alice" :age 30}
+displayln (hamt-ref person :name)  ; prints "Alice"
+
+;; Works in function calls and comparisons
+define (greet who)
+    if (equal? who :world)
+        displayln "Hello, World!"
+        displayln (format "Hello, ~a!" who)
+
+greet :world
+```
+
+Note: Bare `:` is reserved for type annotations in `tab-racket/typed` and is not auto-quoted.
 
 ### Persistent Vector API
 
@@ -282,16 +306,35 @@ define freq (count-words words)
 displayln (format "Word frequencies: ~a" (hamt->list freq))
 ```
 
+### Cache Algorithms (Typed)
+
+The examples include implementations of production cache algorithms using typed persistent data structures:
+
+**ARC (Adaptive Replacement Cache)** - `examples/arc-cache.trk`
+- Self-tuning algorithm used in ZFS
+- Balances recency (LRU) and frequency (LFU) using ghost lists
+- Adapts to workload patterns automatically
+
+**S3-FIFO (Simple, Scalable, FIFO-based)** - `examples/s3fifo-cache.trk`
+- From SOSP 2023: "FIFO Queues are All You Need for Cache Eviction"
+- Uses two FIFO queues (S=10%, M=90%) to filter one-hit-wonders
+- Often faster than ARC with comparable hit rates
+
+Run the benchmark to compare them:
+```bash
+racket tests/cache-bench.trk
+```
+
 ## Running Tests
 
 ```bash
-./test.sh
+raco test tests/tab-racket-test.rkt tests/examples-test.rkt
 ```
 
-Or directly:
+Or run all tests in the tests directory:
 
 ```bash
-raco test test
+raco test tests/
 ```
 
 ## Project Structure
@@ -299,7 +342,9 @@ raco test test
 ```
 .
 ├── tab-racket/
-│   ├── main.rkt          # Core reader and parser
+│   ├── main.rkt          # Core reader and parser (untyped)
+│   ├── typed/
+│   │   └── main.rkt      # Typed variant reader
 │   ├── lang/
 │   │   └── reader.rkt    # #lang tab-racket support
 │   └── info.rkt          # Package metadata
@@ -311,21 +356,49 @@ raco test test
 │   ├── main.rkt          # PVector implementation (untyped)
 │   └── typed-main.rkt    # PVector with full type annotations
 ├── examples/
-│   ├── hello.tab         # Hello world example
-│   ├── fibonacci.tab     # Fibonacci example
-│   └── word-freq.rkt     # Word frequency with persistent structures
-├── test/
+│   ├── hello.trk           # Hello world example
+│   ├── fibonacci.trk       # Fibonacci example
+│   ├── fibonacci-typed.trk # Typed Fibonacci
+│   ├── word-freq.trk       # Word frequency counter
+│   ├── counter-typed.trk   # Word counter with types
+│   ├── arc-cache.trk       # ARC cache algorithm (typed)
+│   └── s3fifo-cache.trk    # S3-FIFO cache algorithm (typed)
+├── tests/
 │   ├── tab-racket-test.rkt  # Parser test suite
 │   ├── hamt-test.rkt        # HAMT test suite
 │   ├── pvector-test.rkt     # PVector test suite
-│   └── persistent-bench.rkt # Performance benchmarks
-├── test.sh               # Test runner script
+│   ├── hash-api-test.trk    # HAMT API demo (tab-racket)
+│   ├── pvector-api-test.trk # PVector API demo (tab-racket)
+│   ├── examples-test.rkt    # Integration tests for examples
+│   └── cache-bench.trk      # ARC vs S3-FIFO benchmark
 ├── flake.nix             # Nix flake configuration
-├── HAMT_TDD_CHECKLIST.md # TDD progress checklist
+├── docs/
+│   └── PROJECT_PLAN.md   # Project planning document
 └── README.md
 ```
 
 ## Typed Racket Support
+
+### Using `#lang tab-racket/typed`
+
+For type-annotated tab-racket code, use the typed variant:
+
+```
+#lang tab-racket/typed
+
+;; Type annotations use : prefix (like Typed Racket)
+: fib (-> Integer Integer)
+define (fib n)
+	cond
+		(= n 0) 0
+		(= n 1) 1
+		else
+			+ (fib (- n 1)) (fib (- n 2))
+
+displayln (fib 10)
+```
+
+### Using Typed Data Structures from Typed Racket
 
 Both persistent data structures have fully typed versions that can be used directly from Typed Racket code without contract overhead:
 
@@ -363,6 +436,7 @@ At 100K elements, persistent operations are ~1.5-2x slower than mutable equivale
 - **No continuation lines** - Line continuation with `\` is not yet implemented
 - Full Racket semantics apply after parsing
 - Persistent vectors use 32-way branching (max ~1 billion elements efficiently)
+- Use `.trk` extension for tab-racket files to distinguish from standard `.rkt` files
 
 ## License
 

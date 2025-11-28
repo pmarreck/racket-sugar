@@ -1,27 +1,35 @@
-#lang tab-racket
+#lang tab-racket/typed
 
-;; ARC (Adaptive Replacement Cache) Implementation
-;; Demonstrates all tab-racket dialect features:
+;; ARC (Adaptive Replacement Cache) Implementation - Typed Variant
+;; Demonstrates typed tab-racket dialect features:
 ;; - Persistent hash map syntax {} with keyword keys
 ;; - Persistent vector syntax []
 ;; - Significant tabbed indentation
-;; - Variables work directly in {} and [] literals
+;; - Type annotations for type safety
 
 ;; ARC is a self-tuning cache algorithm used in ZFS that adaptively
 ;; balances between recency (LRU) and frequency (LFU) policies.
-;; It maintains 4 conceptual lists:
-;;   T1 - Recent entries (seen once recently)
-;;   T2 - Frequent entries (seen multiple times)
-;;   B1 - Ghost entries evicted from T1 (track recency misses)
-;;   B2 - Ghost entries evicted from T2 (track frequency misses)
+
+;; ============================================================================
+;; Type-safe helpers
+;; ============================================================================
+
+;; Get integer from Any with default
+: get-int (-> Any Integer Integer)
+define (get-int val default)
+	if (exact-integer? val)
+		cast val Integer
+		default
 
 ;; ============================================================================
 ;; Helper Functions
 ;; ============================================================================
 
 ;; Remove an element from a vector
+: vec-remove (-> Any Any Any)
 define (vec-remove v elem)
 	define len (pvector-length v)
+	: loop (-> Integer Any Any)
 	define (loop i acc)
 		if (>= i len)
 			acc
@@ -33,8 +41,10 @@ define (vec-remove v elem)
 	loop 0 []
 
 ;; Check if element is in vector
+: vec-contains? (-> Any Any Boolean)
 define (vec-contains? v elem)
 	define len (pvector-length v)
+	: loop (-> Integer Boolean)
 	define (loop i)
 		cond
 			(>= i len) #f
@@ -44,6 +54,7 @@ define (vec-contains? v elem)
 	loop 0
 
 ;; Move element to end of vector (most recently used position)
+: vec-move-to-end (-> Any Any Any)
 define (vec-move-to-end v elem)
 	pvector-push (vec-remove v elem) elem
 
@@ -52,20 +63,22 @@ define (vec-move-to-end v elem)
 ;; ============================================================================
 
 ;; Create an empty ARC cache with given capacity
-;; Structure: {:cache {} :t1 [] :t2 [] :b1 [] :b2 [] :p 0 :cap n}
-;; Variables like 'capacity' work directly in {} literals!
+: make-arc (-> Integer Any)
 define (make-arc capacity)
 	{:cache {} :t1 [] :t2 [] :b1 [] :b2 [] :p 0 :cap capacity}
 
 ;; Get total size of T1 + T2 (actual cache)
+: arc-size (-> Any Integer)
 define (arc-size arc)
 	+ (pvector-length (hamt-ref arc :t1)) (pvector-length (hamt-ref arc :t2))
 
 ;; Get total size of B1 + B2 (ghost lists)
+: ghost-size (-> Any Integer)
 define (ghost-size arc)
 	+ (pvector-length (hamt-ref arc :b1)) (pvector-length (hamt-ref arc :b2))
 
 ;; Evict from T1 (move key to B1 ghost list)
+: evict-from-t1 (-> Any Any)
 define (evict-from-t1 arc)
 	define t1 (hamt-ref arc :t1)
 	if (pvector-empty? t1)
@@ -78,6 +91,7 @@ define (evict-from-t1 arc)
 			hamt-set (hamt-set (hamt-set arc :t1 new-t1) :b1 new-b1) :cache new-cache
 
 ;; Evict from T2 (move key to B2 ghost list)
+: evict-from-t2 (-> Any Any)
 define (evict-from-t2 arc)
 	define t2 (hamt-ref arc :t2)
 	if (pvector-empty? t2)
@@ -90,9 +104,10 @@ define (evict-from-t2 arc)
 			hamt-set (hamt-set (hamt-set arc :t2 new-t2) :b2 new-b2) :cache new-cache
 
 ;; Replace: evict from T1 or T2 based on adaptive parameter p
+: arc-replace (-> Any Any Any)
 define (arc-replace arc key)
 	define t1-len (pvector-length (hamt-ref arc :t1))
-	define p (hamt-ref arc :p)
+	define p (get-int (hamt-ref arc :p) 0)
 	define in-b2 (vec-contains? (hamt-ref arc :b2) key)
 	cond
 		(and (> t1-len 0) (or (> t1-len p) (and in-b2 (= t1-len p))))
@@ -101,8 +116,9 @@ define (arc-replace arc key)
 			evict-from-t2 arc
 
 ;; Trim ghost lists if they get too large
+: trim-ghost-lists (-> Any Any)
 define (trim-ghost-lists arc)
-	define capacity (hamt-ref arc :cap)
+	define capacity (get-int (hamt-ref arc :cap) 0)
 	define total (+ (arc-size arc) (ghost-size arc))
 	if (> total (* 2 capacity))
 		let
@@ -120,12 +136,13 @@ define (trim-ghost-lists arc)
 ;; ============================================================================
 
 ;; Get value from cache, returns {:found bool :value v :arc new-arc}
+: arc-get (-> Any Any Any)
 define (arc-get arc key)
 	define cache (hamt-ref arc :cache)
 	define t1 (hamt-ref arc :t1)
 	define t2 (hamt-ref arc :t2)
 	cond
-		;; Case 1: Key in T1 - promote to T2 (now a frequent item)
+		;; Case 1: Key in T1 - promote to T2
 		(vec-contains? t1 key)
 			let
 				((value (hamt-ref cache key)))
@@ -133,7 +150,7 @@ define (arc-get arc key)
 				define new-t2 (pvector-push t2 key)
 				define new-arc (hamt-set (hamt-set arc :t1 new-t1) :t2 new-t2)
 				{:found #t :value value :arc new-arc}
-		;; Case 2: Key in T2 - move to end (most recently used)
+		;; Case 2: Key in T2 - move to end
 		(vec-contains? t2 key)
 			let
 				((value (hamt-ref cache key)))
@@ -145,13 +162,14 @@ define (arc-get arc key)
 			{:found #f :value #f :arc arc}
 
 ;; Put value into cache
+: arc-put (-> Any Any Any Any)
 define (arc-put arc key value)
-	define capacity (hamt-ref arc :cap)
+	define capacity (get-int (hamt-ref arc :cap) 0)
 	define t1 (hamt-ref arc :t1)
 	define t2 (hamt-ref arc :t2)
 	define b1 (hamt-ref arc :b1)
 	define b2 (hamt-ref arc :b2)
-	define p (hamt-ref arc :p)
+	define p (get-int (hamt-ref arc :p) 0)
 	cond
 		;; Case A: Key already in T1 - promote to T2
 		(vec-contains? t1 key)
@@ -166,7 +184,7 @@ define (arc-put arc key value)
 				((new-cache (hamt-set (hamt-ref arc :cache) key value)))
 				define new-t2 (vec-move-to-end t2 key)
 				hamt-set (hamt-set arc :t2 new-t2) :cache new-cache
-		;; Case C: Key in B1 (ghost) - adapt toward recency, add to T2
+		;; Case C: Key in B1 (ghost) - adapt toward recency
 		(vec-contains? b1 key)
 			let
 				((delta (max 1 (quotient (pvector-length b2) (max 1 (pvector-length b1))))))
@@ -177,7 +195,7 @@ define (arc-put arc key value)
 				define new-t2 (pvector-push (hamt-ref arc2 :t2) key)
 				define new-cache (hamt-set (hamt-ref arc2 :cache) key value)
 				trim-ghost-lists (hamt-set (hamt-set (hamt-set arc2 :b1 new-b1) :t2 new-t2) :cache new-cache)
-		;; Case D: Key in B2 (ghost) - adapt toward frequency, add to T2
+		;; Case D: Key in B2 (ghost) - adapt toward frequency
 		(vec-contains? b2 key)
 			let
 				((delta (max 1 (quotient (pvector-length b1) (max 1 (pvector-length b2))))))
@@ -200,15 +218,13 @@ define (arc-put arc key value)
 ;; Demo
 ;; ============================================================================
 
-displayln "ARC Cache Demo"
-displayln "=============="
+displayln "ARC Cache Demo (Typed)"
+displayln "======================"
 displayln ""
 
-;; Create a small cache for demonstration
 define cache (make-arc 3)
 displayln "Created ARC cache with capacity 3"
 
-;; Insert some values
 displayln ""
 displayln "Inserting keys :a, :b, :c, :d, :e..."
 define c1 (arc-put cache :a 1)
@@ -221,10 +237,7 @@ displayln ""
 displayln (format "Cache size after 5 inserts (capacity 3): ~a" (arc-size c5))
 displayln (format "T1 length: ~a" (pvector-length (hamt-ref c5 :t1)))
 displayln (format "T2 length: ~a" (pvector-length (hamt-ref c5 :t2)))
-displayln (format "B1 ghost length: ~a" (pvector-length (hamt-ref c5 :b1)))
-displayln (format "Adaptive parameter p: ~a" (hamt-ref c5 :p))
 
-;; Access some keys to promote them
 displayln ""
 displayln "Accessing :d twice to promote it..."
 define r1 (arc-get c5 :d)
@@ -233,19 +246,6 @@ define r2 (arc-get c6 :d)
 define c7 (hamt-ref r2 :arc)
 
 displayln (format "T2 now contains :d: ~a" (vec-contains? (hamt-ref c7 :t2) :d))
-
-;; Try to get an evicted key
-displayln ""
-displayln "Looking for :a (should be evicted)..."
-define r3 (arc-get c7 :a)
-displayln (format "Found :a: ~a" (hamt-ref r3 :found))
-
-;; Re-insert :a - since it's in B1, p should adapt
-displayln ""
-displayln "Re-inserting :a (was in ghost list B1)..."
-define c8 (arc-put (hamt-ref r3 :arc) :a 100)
-displayln (format "New adaptive parameter p: ~a" (hamt-ref c8 :p))
-displayln (format ":a now in T2 (promoted): ~a" (vec-contains? (hamt-ref c8 :t2) :a))
 
 displayln ""
 displayln "Demo complete! ARC adapts based on access patterns."
