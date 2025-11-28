@@ -32,71 +32,71 @@
    "Example Programs"
 
    (test-case "hello.tab runs"
-     (check-true (example-runs? "examples/hello.tab")
+     (check-true (example-runs? "examples/hello.trk")
                  "hello.tab should run without errors"))
 
    (test-case "hello.tab output"
-     (define-values (output errors exit-code) (run-example "examples/hello.tab"))
+     (define-values (output errors exit-code) (run-example "examples/hello.trk"))
      (check-equal? exit-code 0 "hello.tab should exit cleanly")
      (check-true (string-contains? output "Hello")
                  "hello.tab should print Hello"))
 
    (test-case "fibonacci.tab runs and computes fib(10)=55"
-     (define-values (output errors exit-code) (run-example "examples/fibonacci.tab"))
+     (define-values (output errors exit-code) (run-example "examples/fibonacci.trk"))
      (check-equal? exit-code 0 "fibonacci.tab should exit cleanly")
      (check-true (string-contains? output "55")
                  "fibonacci.tab should compute fib(10)=55"))
 
-   (test-case "fibonacci-typed.tab runs and computes fib(10)=55"
-     (define-values (output errors exit-code) (run-example "examples/fibonacci-typed.tab"))
-     (check-equal? exit-code 0 "fibonacci-typed.tab should exit cleanly")
+   (test-case "fibonacci-typed.trk runs and computes fib(10)=55"
+     (define-values (output errors exit-code) (run-example "examples/fibonacci-typed.trk"))
+     (check-equal? exit-code 0 "fibonacci-typed.trk should exit cleanly")
      (check-true (string-contains? output "55")
-                 "fibonacci-typed.tab should compute fib(10)=55"))
+                 "fibonacci-typed.trk should compute fib(10)=55"))
 
-   (test-case "counter-typed.tab runs and counts correctly"
-     (define-values (output errors exit-code) (run-example "examples/counter-typed.tab"))
-     (check-equal? exit-code 0 "counter-typed.tab should exit cleanly")
+   (test-case "counter-typed.trk runs and counts correctly"
+     (define-values (output errors exit-code) (run-example "examples/counter-typed.trk"))
+     (check-equal? exit-code 0 "counter-typed.trk should exit cleanly")
      (check-true (string-contains? output "Count of 'the': 3")
-                 "counter-typed.tab should count 'the' as 3")
+                 "counter-typed.trk should count 'the' as 3")
      (check-true (string-contains? output "Demo complete!")
-                 "counter-typed.tab should complete demo"))
+                 "counter-typed.trk should complete demo"))
 
-   (test-case "arc-cache.tab runs"
-     (define-values (output errors exit-code) (run-example "examples/arc-cache.tab"))
-     (check-equal? exit-code 0 "arc-cache.tab should exit cleanly"))
+   (test-case "arc-cache.trk runs"
+     (define-values (output errors exit-code) (run-example "examples/arc-cache.trk"))
+     (check-equal? exit-code 0 "arc-cache.trk should exit cleanly"))
 
-   (test-case "arc-cache.tab demo functionality"
-     (define-values (output errors exit-code) (run-example "examples/arc-cache.tab"))
+   (test-case "arc-cache.trk demo functionality"
+     (define-values (output errors exit-code) (run-example "examples/arc-cache.trk"))
      (check-true (string-contains? output "ARC Cache Demo")
-                 "arc-cache.tab should print demo header")
+                 "arc-cache.trk should print demo header")
      (check-true (string-contains? output "Cache size after 5 inserts (capacity 3): 3")
-                 "arc-cache.tab should respect capacity")
+                 "arc-cache.trk should respect capacity")
      (check-true (string-contains? output "T2 now contains :d: #t")
-                 "arc-cache.tab should promote frequently accessed items to T2")
+                 "arc-cache.trk should promote frequently accessed items to T2")
      (check-true (string-contains? output "Found :a: #f")
-                 "arc-cache.tab should evict old items")
+                 "arc-cache.trk should evict old items")
      (check-true (string-contains? output ":a now in T2 (promoted): #t")
-                 "arc-cache.tab should promote ghost list hits")
+                 "arc-cache.trk should promote ghost list hits")
      (check-true (string-contains? output "Demo complete!")
-                 "arc-cache.tab should complete successfully"))
+                 "arc-cache.trk should complete successfully"))
 
-   (test-case "arc-cache-typed.tab runs"
-     (define-values (output errors exit-code) (run-example "examples/arc-cache-typed.tab"))
-     (check-equal? exit-code 0 "arc-cache-typed.tab should exit cleanly")
+   (test-case "arc-cache-typed.trk runs"
+     (define-values (output errors exit-code) (run-example "examples/arc-cache-typed.trk"))
+     (check-equal? exit-code 0 "arc-cache-typed.trk should exit cleanly")
      (check-true (string-contains? output "ARC Cache Demo (Typed)")
-                 "arc-cache-typed.tab should print typed demo header"))
+                 "arc-cache-typed.trk should print typed demo header"))
 
-   (test-case "s3fifo-cache.tab runs"
-     (define-values (output errors exit-code) (run-example "examples/s3fifo-cache.tab"))
-     (check-equal? exit-code 0 "s3fifo-cache.tab should exit cleanly")
+   (test-case "s3fifo-cache.trk runs"
+     (define-values (output errors exit-code) (run-example "examples/s3fifo-cache.trk"))
+     (check-equal? exit-code 0 "s3fifo-cache.trk should exit cleanly")
      (check-true (string-contains? output "S3-FIFO Cache Demo")
-                 "s3fifo-cache.tab should print demo header"))
+                 "s3fifo-cache.trk should print demo header"))
 
-   (test-case "s3fifo-cache-typed.tab runs"
-     (define-values (output errors exit-code) (run-example "examples/s3fifo-cache-typed.tab"))
-     (check-equal? exit-code 0 "s3fifo-cache-typed.tab should exit cleanly")
+   (test-case "s3fifo-cache-typed.trk runs"
+     (define-values (output errors exit-code) (run-example "examples/s3fifo-cache-typed.trk"))
+     (check-equal? exit-code 0 "s3fifo-cache-typed.trk should exit cleanly")
      (check-true (string-contains? output "S3-FIFO Cache Demo (Typed)")
-                 "s3fifo-cache-typed.tab should print typed demo header"))))
+                 "s3fifo-cache-typed.trk should print typed demo header"))))
 
 ;; =============================================================================
 ;; Run all tests
