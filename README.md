@@ -501,22 +501,21 @@ define (fib n)
 displayln (fib 10)
 ```
 
-### Using Typed Data Structures from Typed Racket
+### Using Typed Data Structures from tab-racket/typed
 
-Both persistent data structures have fully typed versions that can be used directly from Typed Racket code without contract overhead:
+Both persistent data structures have fully typed versions that can be used directly from tab-racket/typed code without contract overhead:
 
-```racket
-#lang typed/racket
+```
+#lang tab-racket/typed
 
-(require "hamt/typed-main.rkt"
-         "pvector/typed-main.rkt")
+require "hamt/typed-main.rkt" "pvector/typed-main.rkt"
 
 ;; Types are: HAMT, PVector
-(: my-map HAMT)
-(define my-map (hamt "key" 42))
+: my-map HAMT
+define my-map (hamt "key" 42)
 
-(: my-vec PVector)
-(define my-vec (pvector 1 2 3))
+: my-vec PVector
+define my-vec (pvector 1 2 3)
 ```
 
 The typed versions use `unsafe-fxpopcount` and other unsafe operations internally for performance while maintaining type safety at the API boundary.
