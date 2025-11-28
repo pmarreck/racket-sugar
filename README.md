@@ -490,7 +490,7 @@ For type-annotated tab-racket code, use the typed variant:
 #lang tab-racket/typed
 
 ;; Type annotations use : prefix (like Typed Racket)
-: fib (-> Integer Integer)
+: fib (Integer ~-> Integer)
 define (fib n)
 	cond
 		(= n 0) 0
