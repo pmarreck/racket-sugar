@@ -13,7 +13,7 @@
 ;; Type-safe helpers
 ;; ============================================================================
 
-: get-int (-> Any Integer Integer)
+: get-int (Any Integer ~-> Integer)
 define (get-int val default)
 	if (exact-integer? val)
 		cast val Integer
@@ -24,13 +24,13 @@ define (get-int val default)
 ;; ============================================================================
 
 ;; Remove first element from vector (FIFO dequeue)
-: vec-dequeue (-> Any Any)
+: vec-dequeue (Any ~-> Any)
 define (vec-dequeue v)
 	if (pvector-empty? v)
 		v
 		let
 			((len (pvector-length v)))
-			: loop (-> Integer Any Any)
+			: loop (Integer Any ~-> Any)
 			define (loop i acc)
 				if (>= i len)
 					acc
@@ -38,17 +38,17 @@ define (vec-dequeue v)
 			loop 1 []
 
 ;; Get first element from vector (FIFO peek)
-: vec-peek (-> Any Any)
+: vec-peek (Any ~-> Any)
 define (vec-peek v)
 	if (pvector-empty? v)
 		#f
 		pvector-ref v 0
 
 ;; Remove specific element from vector
-: vec-remove (-> Any Any Any)
+: vec-remove (Any Any ~-> Any)
 define (vec-remove v elem)
 	define len (pvector-length v)
-	: loop (-> Integer Any Any)
+	: loop (Integer Any ~-> Any)
 	define (loop i acc)
 		if (>= i len)
 			acc
@@ -60,10 +60,10 @@ define (vec-remove v elem)
 	loop 0 []
 
 ;; Check if element is in vector
-: vec-contains? (-> Any Any Boolean)
+: vec-contains? (Any Any ~-> Boolean)
 define (vec-contains? v elem)
 	define len (pvector-length v)
-	: loop (-> Integer Boolean)
+	: loop (Integer ~-> Boolean)
 	define (loop i)
 		cond
 			(>= i len) #f
@@ -77,29 +77,29 @@ define (vec-contains? v elem)
 ;; ============================================================================
 
 ;; Create an empty S3-FIFO cache
-: make-s3fifo (-> Integer Any)
+: make-s3fifo (Integer ~-> Any)
 define (make-s3fifo capacity)
 	define s-cap (max 1 (quotient capacity 10))
 	define m-cap (- capacity s-cap)
 	{:cache {} :s [] :m [] :freq {} :s-cap s-cap :m-cap m-cap}
 
 ;; Get size of S queue
-: s-size (-> Any Integer)
+: s-size (Any ~-> Integer)
 define (s-size cache)
 	pvector-length (hamt-ref cache :s)
 
 ;; Get size of M queue
-: m-size (-> Any Integer)
+: m-size (Any ~-> Integer)
 define (m-size cache)
 	pvector-length (hamt-ref cache :m)
 
 ;; Total cache size
-: s3fifo-size (-> Any Integer)
+: s3fifo-size (Any ~-> Integer)
 define (s3fifo-size cache)
 	+ (s-size cache) (m-size cache)
 
 ;; Get frequency count for a key
-: get-freq (-> Any Any Integer)
+: get-freq (Any Any ~-> Integer)
 define (get-freq cache key)
 	define freq-map (hamt-ref cache :freq)
 	if (hamt-contains? freq-map key)
@@ -107,14 +107,14 @@ define (get-freq cache key)
 		0
 
 ;; Increment frequency (capped at 3)
-: inc-freq (-> Any Any Any)
+: inc-freq (Any Any ~-> Any)
 define (inc-freq cache key)
 	define current (get-freq cache key)
 	define new-freq (min 3 (+ current 1))
 	hamt-set cache :freq (hamt-set (hamt-ref cache :freq) key new-freq)
 
 ;; Evict from M queue (simple FIFO eviction)
-: evict-from-m (-> Any Any)
+: evict-from-m (Any ~-> Any)
 define (evict-from-m cache)
 	define m (hamt-ref cache :m)
 	if (pvector-empty? m)
@@ -127,7 +127,7 @@ define (evict-from-m cache)
 			hamt-set (hamt-set (hamt-set cache :m new-m) :cache new-cache-data) :freq new-freq
 
 ;; Evict from S queue - either promote to M or evict completely
-: evict-from-s (-> Any Any)
+: evict-from-s (Any ~-> Any)
 define (evict-from-s cache)
 	define s (hamt-ref cache :s)
 	if (pvector-empty? s)
@@ -154,7 +154,7 @@ define (evict-from-s cache)
 ;; ============================================================================
 
 ;; Get value from cache
-: s3fifo-get (-> Any Any Any)
+: s3fifo-get (Any Any ~-> Any)
 define (s3fifo-get cache key)
 	define cache-data (hamt-ref cache :cache)
 	if (hamt-contains? cache-data key)
@@ -165,7 +165,7 @@ define (s3fifo-get cache key)
 		{:found #f :value #f :cache cache}
 
 ;; Put value into cache
-: s3fifo-put (-> Any Any Any Any)
+: s3fifo-put (Any Any Any ~-> Any)
 define (s3fifo-put cache key value)
 	define cache-data (hamt-ref cache :cache)
 	define s (hamt-ref cache :s)

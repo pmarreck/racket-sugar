@@ -15,7 +15,7 @@
 ;; Type-safe helpers
 ;; ============================================================================
 
-: get-int (-> Any Integer Integer)
+: get-int (Any Integer ~-> Integer)
 define (get-int val default)
 	if (exact-integer? val)
 		cast val Integer
@@ -26,10 +26,10 @@ define (get-int val default)
 ;; ============================================================================
 
 ;; Remove element at index from vector, return (values new-vec removed-elem)
-: vec-remove-at (-> Any Integer Any)
+: vec-remove-at (Any Integer ~-> Any)
 define (vec-remove-at v idx)
 	define len (pvector-length v)
-	: loop (-> Integer Any Any)
+	: loop (Integer Any ~-> Any)
 	define (loop i acc)
 		if (>= i len)
 			acc
@@ -39,10 +39,10 @@ define (vec-remove-at v idx)
 	loop 0 []
 
 ;; Get index of element in vector, or -1 if not found
-: vec-index-of (-> Any Any Integer)
+: vec-index-of (Any Any ~-> Integer)
 define (vec-index-of v elem)
 	define len (pvector-length v)
-	: loop (-> Integer Integer)
+	: loop (Integer ~-> Integer)
 	define (loop i)
 		cond
 			(>= i len) -1
@@ -52,7 +52,7 @@ define (vec-index-of v elem)
 	loop 0
 
 ;; Check if element is in vector
-: vec-contains? (-> Any Any Boolean)
+: vec-contains? (Any Any ~-> Boolean)
 define (vec-contains? v elem)
 	>= (vec-index-of v elem) 0
 
@@ -62,32 +62,32 @@ define (vec-contains? v elem)
 
 ;; Create an empty SIEVE cache
 ;; Structure: {:cache data-map :queue fifo-vec :visited visited-map :hand index :capacity n}
-: make-sieve (-> Integer Any)
+: make-sieve (Integer ~-> Any)
 define (make-sieve capacity)
 	{:cache {} :queue [] :visited {} :hand 0 :capacity capacity}
 
 ;; Get cache size
-: sieve-size (-> Any Integer)
+: sieve-size (Any ~-> Integer)
 define (sieve-size cache)
 	pvector-length (hamt-ref cache :queue)
 
 ;; Check if cache is full
-: sieve-full? (-> Any Boolean)
+: sieve-full? (Any ~-> Boolean)
 define (sieve-full? cache)
 	>= (sieve-size cache) (get-int (hamt-ref cache :capacity) 0)
 
 ;; Set visited bit for a key
-: set-visited (-> Any Any Any)
+: set-visited (Any Any ~-> Any)
 define (set-visited cache key)
 	hamt-set cache :visited (hamt-set (hamt-ref cache :visited) key #t)
 
 ;; Clear visited bit for a key
-: clear-visited (-> Any Any Any)
+: clear-visited (Any Any ~-> Any)
 define (clear-visited cache key)
 	hamt-set cache :visited (hamt-set (hamt-ref cache :visited) key #f)
 
 ;; Check if key has been visited
-: is-visited? (-> Any Any Boolean)
+: is-visited? (Any Any ~-> Boolean)
 define (is-visited? cache key)
 	define visited-map (hamt-ref cache :visited)
 	if (hamt-contains? visited-map key)
@@ -99,7 +99,7 @@ define (is-visited? cache key)
 ;; Hand starts at tail and moves toward head
 ;; If visited: clear bit, move hand toward head, keep item in place
 ;; If not visited: evict item
-: sieve-evict (-> Any Any)
+: sieve-evict (Any ~-> Any)
 define (sieve-evict cache)
 	define queue (hamt-ref cache :queue)
 	define len (pvector-length queue)
@@ -109,7 +109,7 @@ define (sieve-evict cache)
 			((raw-hand (get-int (hamt-ref cache :hand) (- len 1))))
 			;; Ensure hand is in valid range, default to tail
 			define hand (if (>= raw-hand len) (- len 1) (if (< raw-hand 0) (- len 1) raw-hand))
-			: scan (-> Any Integer Integer Any)
+			: scan (Any Integer Integer ~-> Any)
 			define (scan c h iterations)
 				if (>= iterations len)
 					;; Fallback: evict at current hand position
@@ -149,7 +149,7 @@ define (sieve-evict cache)
 
 ;; Get value from cache
 ;; On hit: set visited bit
-: sieve-get (-> Any Any Any)
+: sieve-get (Any Any ~-> Any)
 define (sieve-get cache key)
 	define cache-data (hamt-ref cache :cache)
 	if (hamt-contains? cache-data key)
@@ -161,7 +161,7 @@ define (sieve-get cache key)
 
 ;; Put value into cache
 ;; New items inserted at head (index 0) with visited=false
-: sieve-put (-> Any Any Any Any)
+: sieve-put (Any Any Any ~-> Any)
 define (sieve-put cache key value)
 	define cache-data (hamt-ref cache :cache)
 	define queue (hamt-ref cache :queue)
@@ -178,7 +178,7 @@ define (sieve-put cache key value)
 			define old-queue (hamt-ref cache1 :queue)
 			define new-queue (pvector-push [] key)
 			define len (pvector-length old-queue)
-			: build-queue (-> Integer Any Any)
+			: build-queue (Integer Any ~-> Any)
 			define (build-queue i acc)
 				if (>= i len)
 					acc

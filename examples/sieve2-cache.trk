@@ -15,7 +15,7 @@
 ;; Type-safe helpers
 ;; ============================================================================
 
-: get-int (-> Any Integer Integer)
+: get-int (Any Integer ~-> Integer)
 define (get-int val default)
 	if (exact-integer? val)
 		cast val Integer
@@ -26,10 +26,10 @@ define (get-int val default)
 ;; ============================================================================
 
 ;; Remove element at index from vector
-: vec-remove-at (-> Any Integer Any)
+: vec-remove-at (Any Integer ~-> Any)
 define (vec-remove-at v idx)
 	define len (pvector-length v)
-	: loop (-> Integer Any Any)
+	: loop (Integer Any ~-> Any)
 	define (loop i acc)
 		if (>= i len)
 			acc
@@ -39,10 +39,10 @@ define (vec-remove-at v idx)
 	loop 0 []
 
 ;; Get index of element in vector, or -1 if not found
-: vec-index-of (-> Any Any Integer)
+: vec-index-of (Any Any ~-> Integer)
 define (vec-index-of v elem)
 	define len (pvector-length v)
-	: loop (-> Integer Integer)
+	: loop (Integer ~-> Integer)
 	define (loop i)
 		cond
 			(>= i len) -1
@@ -52,7 +52,7 @@ define (vec-index-of v elem)
 	loop 0
 
 ;; Check if element is in vector
-: vec-contains? (-> Any Any Boolean)
+: vec-contains? (Any Any ~-> Boolean)
 define (vec-contains? v elem)
 	>= (vec-index-of v elem) 0
 
@@ -62,22 +62,22 @@ define (vec-contains? v elem)
 
 ;; Create an empty SIEVE-2 cache
 ;; Structure: {:cache data-map :queue fifo-vec :counter counter-map :hand index :capacity n}
-: make-sieve2 (-> Integer Any)
+: make-sieve2 (Integer ~-> Any)
 define (make-sieve2 capacity)
 	{:cache {} :queue [] :counter {} :hand 0 :capacity capacity}
 
 ;; Get cache size
-: sieve2-size (-> Any Integer)
+: sieve2-size (Any ~-> Integer)
 define (sieve2-size cache)
 	pvector-length (hamt-ref cache :queue)
 
 ;; Check if cache is full
-: sieve2-full? (-> Any Boolean)
+: sieve2-full? (Any ~-> Boolean)
 define (sieve2-full? cache)
 	>= (sieve2-size cache) (get-int (hamt-ref cache :capacity) 0)
 
 ;; Get counter value for a key (0-3)
-: get-counter (-> Any Any Integer)
+: get-counter (Any Any ~-> Integer)
 define (get-counter cache key)
 	define counter-map (hamt-ref cache :counter)
 	if (hamt-contains? counter-map key)
@@ -85,14 +85,14 @@ define (get-counter cache key)
 		0
 
 ;; Increment counter (saturates at 3)
-: inc-counter (-> Any Any Any)
+: inc-counter (Any Any ~-> Any)
 define (inc-counter cache key)
 	define current (get-counter cache key)
 	define new-val (min 3 (+ current 1))
 	hamt-set cache :counter (hamt-set (hamt-ref cache :counter) key new-val)
 
 ;; Decrement counter (saturates at 0)
-: dec-counter (-> Any Any Any)
+: dec-counter (Any Any ~-> Any)
 define (dec-counter cache key)
 	define current (get-counter cache key)
 	define new-val (max 0 (- current 1))
@@ -102,7 +102,7 @@ define (dec-counter cache key)
 ;; Hand scans from tail toward head
 ;; If counter > 0: decrement counter, move hand, keep item in place
 ;; If counter = 0: evict item
-: sieve2-evict (-> Any Any)
+: sieve2-evict (Any ~-> Any)
 define (sieve2-evict cache)
 	define queue (hamt-ref cache :queue)
 	define len (pvector-length queue)
@@ -112,7 +112,7 @@ define (sieve2-evict cache)
 			((raw-hand (get-int (hamt-ref cache :hand) (- len 1))))
 			;; Ensure hand is in valid range, default to tail
 			define hand (if (>= raw-hand len) (- len 1) (if (< raw-hand 0) (- len 1) raw-hand))
-			: scan (-> Any Integer Integer Any)
+			: scan (Any Integer Integer ~-> Any)
 			define (scan c h iterations)
 				if (>= iterations len)
 					;; Fallback: evict at current hand position
@@ -153,7 +153,7 @@ define (sieve2-evict cache)
 
 ;; Get value from cache
 ;; On hit: increment counter (saturates at 3)
-: sieve2-get (-> Any Any Any)
+: sieve2-get (Any Any ~-> Any)
 define (sieve2-get cache key)
 	define cache-data (hamt-ref cache :cache)
 	if (hamt-contains? cache-data key)
@@ -165,7 +165,7 @@ define (sieve2-get cache key)
 
 ;; Put value into cache
 ;; New items inserted at head (index 0) with counter=0
-: sieve2-put (-> Any Any Any Any)
+: sieve2-put (Any Any Any ~-> Any)
 define (sieve2-put cache key value)
 	define cache-data (hamt-ref cache :cache)
 	define queue (hamt-ref cache :queue)
@@ -182,7 +182,7 @@ define (sieve2-put cache key value)
 			define old-queue (hamt-ref cache1 :queue)
 			define new-queue (pvector-push [] key)
 			define len (pvector-length old-queue)
-			: build-queue (-> Integer Any Any)
+			: build-queue (Integer Any ~-> Any)
 			define (build-queue i acc)
 				if (>= i len)
 					acc

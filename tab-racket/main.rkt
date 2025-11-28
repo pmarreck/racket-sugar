@@ -184,6 +184,37 @@
 				 (and (> (string-length s) 1)  ; Must be more than just ":"
 							(char=? (string-ref s 0) #\:)))))
 
+;; Helper: Check if a symbol is an infix operator (starts with ~)
+;; ~+ means infix +, ~mod means infix mod, etc.
+(define (infix-symbol? v)
+	(and (symbol? v)
+			 (let ([s (symbol->string v)])
+				 (and (> (string-length s) 1)  ; Must be more than just "~"
+							(char=? (string-ref s 0) #\~)))))
+
+;; Extract the actual function name from an infix symbol
+;; ~+ -> +, ~mod -> mod, ~-> -> ->
+(define (infix->func sym)
+	(string->symbol (substring (symbol->string sym) 1)))
+
+;; Transform infix expressions: (a ~func b ...) -> (func a b ...)
+;; Finds any ~func symbol in second position of a list and moves it to front
+;; Recursively processes nested lists
+(define (transform-infix v)
+	(cond
+		[(and (pair? v)
+					(>= (length v) 3)  ; Need at least (a ~op b)
+					(infix-symbol? (cadr v)))  ; Second element is ~something
+		 ;; Transform: (a ~func b ...) -> (func a b ...)
+		 (let ([left (transform-infix (car v))]      ; First arg (recurse)
+					 [op (infix->func (cadr v))]          ; The function (strip ~)
+					 [rest (map transform-infix (cddr v))]) ; Remaining args (recurse)
+			 (cons op (cons left rest)))]
+		[(pair? v)
+		 ;; Not an infix expression, but still recurse into sub-expressions
+		 (map transform-infix v)]
+		[else v]))
+
 ;; Helper: Auto-quote keywords (symbols starting with :) to make them self-evaluating
 ;; This mimics Clojure/Ruby/Elixir behavior where :foo evaluates to itself
 ;; Recursively processes nested lists (but not already-quoted forms)
@@ -201,6 +232,7 @@
 			(let ([token (read-with-table in clojure-readtable)])
 				(if (eof-object? token)
 						(reverse tokens)
+						;; Apply keyword quoting during tokenization (infix transform happens after parsing)
 						(loop (cons (auto-quote-keyword token) tokens)))))))
 
 (define (split-f-list lst pred)
@@ -248,11 +280,13 @@
 
 (define (read in)
 	(let ([lines (read-all-lines in)])
-		(parse-block lines 0)))
+		;; Apply infix transform after parsing (when lists are formed)
+		(map transform-infix (parse-block lines 0))))
 
 (define (read-syntax src in)
 	(let* ([lines (read-all-lines in)]
-				 [body (parse-block lines 0)])
+				 ;; Apply infix transform after parsing (when lists are formed)
+				 [body (map transform-infix (parse-block lines 0))])
 		;; Wrap the parsed body in a module definition
 		;; Include tab-racket bindings (HAMT, etc.)
 		(datum->syntax #f

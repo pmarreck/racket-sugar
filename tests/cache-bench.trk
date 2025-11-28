@@ -667,7 +667,8 @@ define (run-bench name make-fn get-fn put-fn cap ops key-gen-fn)
 	define elapsed (- (current-inexact-milliseconds) start)
 	define hits (hamt-ref result :hits)
 	define hit-rate (* 100.0 (/ hits ops))
-	displayln (format "  ~a: ~a% (~ams)" name (/ (round (* hit-rate 10)) 10.0) (round elapsed))
+	define us-per-op (* 1000.0 (/ elapsed ops))
+	displayln (format "  ~a: ~a% (~ams, ~aμs/op)" name (/ (round (* hit-rate 10)) 10.0) (round elapsed) (/ (round (* us-per-op 100)) 100.0))
 	hit-rate
 
 ;; ============================================================================

@@ -9,6 +9,7 @@ A Racket language variant that uses significant **tab-based indentation** instea
 ### Key Features
 
 - **Tab-based significant indentation** - Structure code without parentheses
+- **Infix operators** - `(a ~+ b)` for readable binary operations
 - **Persistent vectors** - `[]` creates immutable, structurally-shared vectors with O(log32 n) operations
 - **Persistent hash maps** - `{}` creates HAMTs (Hash Array Mapped Tries) with O(log64 n) operations
 - **Self-evaluating keywords** - `:foo` symbols auto-evaluate like Clojure/Ruby/Elixir atoms
@@ -173,6 +174,68 @@ greet :world
 ```
 
 Note: Bare `:` is reserved for type annotations in `tab-racket/typed` and is not auto-quoted.
+
+### Infix Operators (`~func`)
+
+For binary operations, you can use infix syntax with the `~` prefix. `(a ~func b)` transforms to `(func a b)`:
+
+```
+#lang tab-racket
+
+;; Arithmetic - more readable than prefix
+displayln (1 ~+ 2)              ; → (+ 1 2) = 3
+displayln (10 ~- 3)             ; → (- 10 3) = 7
+displayln (4 ~* 5)              ; → (* 4 5) = 20
+displayln (10 ~/ 2)             ; → (/ 10 2) = 5
+
+;; Comparisons
+displayln (5 ~< 10)             ; → (< 5 10) = #t
+displayln (5 ~> 10)             ; → (> 5 10) = #f
+displayln (5 ~= 5)              ; → (= 5 5) = #t
+
+;; Any binary function works
+displayln (17 ~modulo 5)        ; → (modulo 17 5) = 2
+displayln ("hello" ~string-append " world")  ; → "hello world"
+
+;; Nested expressions - use parens for precedence
+displayln (1 ~+ (2 ~* 3))       ; → (+ 1 (* 2 3)) = 7
+displayln ((10 ~- 2) ~* 3)      ; → (* (- 10 2) 3) = 24
+
+;; Works in function bodies
+define (add x y)
+	x ~+ y
+
+define (quadratic a b c x)
+	(a ~* (x ~* x)) ~+ ((b ~* x) ~+ c)
+```
+
+Works with `#lang tab-racket/typed` too:
+
+```
+#lang tab-racket/typed
+
+: add (Integer Integer ~-> Integer)
+define (add x y)
+	x ~+ y
+
+: quadratic (Integer Integer Integer Integer ~-> Integer)
+define (quadratic a b c x)
+	(a ~* (x ~* x)) ~+ ((b ~* x) ~+ c)
+
+displayln (add 3 4)           ; 7
+displayln (quadratic 1 2 1 3) ; 16
+```
+
+**Type annotation syntax**: In type annotations, `~->` as the second-to-last element moves to the front as `->`. This reads naturally as "args ~-> return":
+
+```
+(Integer ~-> Integer)                    ; → (-> Integer Integer)
+(Integer Integer ~-> Integer)            ; → (-> Integer Integer Integer)
+(String (Listof Integer) ~-> Integer)    ; → (-> String (Listof Integer) Integer)
+((Integer ~-> Integer) Integer ~-> Integer)  ; Higher-order function
+```
+
+Note: The `~` prefix is only special when followed by an identifier. The tilde character in format strings (`~a`, `~s`, etc.) is unaffected.
 
 ### Persistent Vector API
 

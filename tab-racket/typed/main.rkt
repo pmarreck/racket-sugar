@@ -170,6 +170,76 @@
 				 (and (> (string-length s) 1)  ; Must be more than just ":"
 							(char=? (string-ref s 0) #\:)))))
 
+;; Helper: Check if a symbol is an infix operator (starts with ~)
+;; ~+ means infix +, ~mod means infix mod, etc.
+(define (infix-symbol? v)
+	(and (symbol? v)
+			 (let ([s (symbol->string v)])
+				 (and (> (string-length s) 1)  ; Must be more than just "~"
+							(char=? (string-ref s 0) #\~)))))
+
+;; Extract the actual function name from an infix symbol
+;; ~+ -> +, ~mod -> mod, ~-> -> ->
+(define (infix->func sym)
+	(string->symbol (substring (symbol->string sym) 1)))
+
+;; Transform infix expressions: (a ~func b ...) -> (func a b ...)
+;; Finds any ~func symbol in second position of a list and moves it to front
+;; Recursively processes nested lists
+(define (transform-infix v)
+	(cond
+		[(and (pair? v)
+					(>= (length v) 3)  ; Need at least (a ~op b)
+					(infix-symbol? (cadr v)))  ; Second element is ~something
+		 ;; Transform: (a ~func b ...) -> (func a b ...)
+		 (let ([left (transform-infix (car v))]      ; First arg (recurse)
+					 [op (infix->func (cadr v))]          ; The function (strip ~)
+					 [rest (map transform-infix (cddr v))]) ; Remaining args (recurse)
+			 (cons op (cons left rest)))]
+		[(pair? v)
+		 ;; Not an infix expression, but still recurse into sub-expressions
+		 (map transform-infix v)]
+		[else v]))
+
+;; Transform type annotations: (A B C ~-> R) -> (-> A B C R)
+;; When ~-> is the second-to-last element, move it to front as ->
+;; This makes (Integer String ~-> Boolean) become (-> Integer String Boolean)
+(define (transform-type-arrow v)
+	(cond
+		[(and (pair? v)
+					(>= (length v) 3)  ; Need at least (A ~-> R)
+					(let ([second-to-last (list-ref v (- (length v) 2))])
+						(and (symbol? second-to-last)
+								 (equal? second-to-last '~->))))
+		 ;; Transform: (A B ... ~-> R) -> (-> A B ... R)
+		 (let* ([len (length v)]
+						[args (map transform-type-arrow (take v (- len 2)))]  ; All but last two
+						[return-type (transform-type-arrow (list-ref v (- len 1)))])  ; Last element
+			 (cons '-> (append args (list return-type))))]
+		[(pair? v)
+		 ;; Not a type arrow, but still recurse into sub-expressions
+		 (map transform-type-arrow v)]
+		[else v]))
+
+;; Transform a top-level expression, applying type-arrow transform to type annotations
+;; Detects (: name type-expr) pattern and transforms type-expr specially
+(define (transform-with-type-awareness v)
+	(cond
+		[(and (pair? v)
+					(>= (length v) 3)
+					(eq? (car v) ':))
+		 ;; This is a type annotation (: name type-expr)
+		 ;; Apply type-arrow transform to the type expression (third element)
+		 (let ([colon (car v)]
+					 [name (cadr v)]
+					 [type-expr (transform-type-arrow (caddr v))]
+					 [rest (cdddr v)])  ; Any additional elements (shouldn't be any)
+			 (cons colon (cons name (cons type-expr rest))))]
+		[(pair? v)
+		 ;; Not a type annotation at top level, recurse but keep looking
+		 (map transform-with-type-awareness v)]
+		[else v]))
+
 ;; Helper: Auto-quote keywords (symbols starting with :) to make them self-evaluating
 ;; This mimics Clojure/Ruby/Elixir behavior where :foo evaluates to itself
 ;; Recursively processes nested lists (but not already-quoted forms)
@@ -187,6 +257,7 @@
 			(let ([token (read-with-table in clojure-readtable)])
 				(if (eof-object? token)
 						(reverse tokens)
+						;; Apply keyword quoting during tokenization (infix transform happens after parsing)
 						(loop (cons (auto-quote-keyword token) tokens)))))))
 
 (define (split-f-list lst pred)
@@ -231,12 +302,21 @@
 								(add1 idx))))))
 
 (define (read in)
-	(let ([lines (read-all-lines in)])
-		(parse-block lines 0)))
+	(let* ([lines (read-all-lines in)]
+				 [parsed (parse-block lines 0)]
+				 ;; Apply type-aware transform first (handles ~-> in type annotations)
+				 ;; Then apply general infix transform (handles ~+ etc in code)
+				 [type-transformed (map transform-with-type-awareness parsed)]
+				 [fully-transformed (map transform-infix type-transformed)])
+		fully-transformed))
 
 (define (read-syntax src in)
 	(let* ([lines (read-all-lines in)]
-				 [body (parse-block lines 0)])
+				 [parsed (parse-block lines 0)]
+				 ;; Apply type-aware transform first (handles ~-> in type annotations)
+				 ;; Then apply general infix transform (handles ~+ etc in code)
+				 [type-transformed (map transform-with-type-awareness parsed)]
+				 [body (map transform-infix type-transformed)])
 		;; Wrap in typed/racket module with require/typed for persistent structures
 		(datum->syntax #f
 									 `(module anonymous typed/racket

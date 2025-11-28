@@ -11,7 +11,7 @@
 ;; Type-safe helpers for working with persistent structures
 ;; ============================================================================
 
-: get-int (-> Any Integer Integer)
+: get-int (Any Integer ~-> Integer)
 define (get-int val default)
 	if (exact-integer? val)
 		cast val Integer
@@ -21,12 +21,12 @@ define (get-int val default)
 ;; Counter Operations (simple key-value store)
 ;; ============================================================================
 
-: counter-inc (-> Any String Any)
+: counter-inc (Any String ~-> Any)
 define (counter-inc counter word)
 	define current (hamt-ref counter word 0)
 	hamt-set counter word (+ (get-int current 0) 1)
 
-: counter-get (-> Any String Integer)
+: counter-get (Any String ~-> Integer)
 define (counter-get counter word)
 	get-int (hamt-ref counter word 0) 0
 
