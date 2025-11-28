@@ -1,22 +1,19 @@
-# Racket compiled files
-compiled/
-*.zo
-*.dep
-
 # macOS
 .DS_Store
+.AppleDouble
+.LSOverride
 
-# direnv
-.direnv/
+# Racket compiled files
+compiled/
+**/compiled/
 
-# Nix
-result
-result-*
-
-# Performance test logs
-perf-log.tsv
-
-# Editor
+# Editor files
 *~
+\#*\#
 .#*
-\#*#
+
+# State files
+.dirtree-state
+
+# Nix/direnv
+.direnv/
