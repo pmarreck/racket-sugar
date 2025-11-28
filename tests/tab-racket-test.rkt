@@ -455,6 +455,72 @@
 							(check-true (pair? (car result)))))))
 
 ;; =============================================================================
+;; Line Continuation Tests (\ at end of line)
+;; =============================================================================
+
+(define line-continuation-tests
+		(test-suite
+			"Line Continuation"
+
+			(test-case "Basic line continuation joins tokens"
+					;; + 1 2 \
+					;; 3 4
+					;; Should become (+ 1 2 3 4)
+					(let ([result (parse-string "+ 1 2 \\\n3 4")])
+							(check-equal? (car result) '(+ 1 2 3 4))))
+
+			(test-case "Line continuation in function body"
+					;; define (foo)
+					;;     + 1 \
+					;;     2
+					;; Should become (define (foo) (+ 1 2))
+					(let ([result (parse-string "define (foo)\n\t+ 1 \\\n\t2")])
+							(check-equal? (car result) '(define (foo) (+ 1 2)))))
+
+			(test-case "Multiple line continuations"
+					;; + 1 \
+					;; 2 \
+					;; 3
+					;; Should become (+ 1 2 3)
+					(let ([result (parse-string "+ 1 \\\n2 \\\n3")])
+							(check-equal? (car result) '(+ 1 2 3))))
+
+			(test-case "Line continuation preserves structure"
+					;; list "a very long" \
+					;; "string here"
+					(let ([result (parse-string "list \"hello\" \\\n\"world\"")])
+							(check-equal? (car result) '(list "hello" "world"))))
+
+			(test-case "Line continuation with wrong indentation errors"
+					;; + 1 \
+					;;     2   <- wrong indent (extra tab)
+					;; Should error
+					(check-exn exn:fail?
+							(lambda () (parse-string "+ 1 \\\n\t2"))))
+
+			(test-case "Line continuation at nested indent level"
+					;; define (foo)
+					;;     if #t \
+					;;     1 \
+					;;     2
+					;; Inner continuation should work at indent level 1
+					(let ([result (parse-string "define (foo)\n\tif #t \\\n\t1 \\\n\t2")])
+							(check-equal? (car result) '(define (foo) (if #t 1 2)))))
+
+			(test-case "Backslash not at end of line is literal"
+					;; Check that backslash in middle of line doesn't trigger continuation
+					;; "hello\\nworld" should be a string with backslash-n
+					(let ([result (parse-string "displayln \"hello\\\\nworld\"")])
+							(check-true (pair? (car result)))))
+
+			(test-case "Line continuation at EOF errors"
+					;; + 1 2 \
+					;; <EOF>
+					;; Should error - nothing to continue to
+					(check-exn exn:fail?
+							(lambda () (parse-string "+ 1 2 \\"))))))
+
+;; =============================================================================
 ;; Run all tests
 ;; =============================================================================
 
@@ -471,6 +537,7 @@
 			syntax-tests
 			runtime-literal-tests
 			self-evaluating-keyword-tests
-			infix-operator-tests))
+			infix-operator-tests
+			line-continuation-tests))
 
 (run-tests all-tests 'verbose)

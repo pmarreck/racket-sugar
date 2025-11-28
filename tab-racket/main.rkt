@@ -268,13 +268,50 @@
 						 (loop siblings (cons expr acc))]
 						[else (error "Indentation gap error.")])))))
 
+;; Check if a line ends with \ (line continuation marker)
+;; Returns #t if the line ends with backslash (possibly followed by whitespace)
+(define (line-continues? str)
+	(let ([trimmed (string-trim str #:left? #f)])
+		(and (> (string-length trimmed) 0)
+				 (char=? (string-ref trimmed (sub1 (string-length trimmed))) #\\))))
+
+;; Strip the trailing backslash from a continuation line
+(define (strip-continuation str)
+	(let ([trimmed (string-trim str #:left? #f)])
+		(if (line-continues? trimmed)
+				(substring trimmed 0 (sub1 (string-length trimmed)))
+				str)))
+
+;; Read a possibly multi-line logical line (handling \ continuation)
+;; Returns: (values complete-line-string line-number lines-consumed)
+(define (read-continued-line port start-line-num)
+	(let ([raw (read-line port)])
+		(if (eof-object? raw)
+				(values #f start-line-num 0)
+				(if (line-continues? raw)
+						;; Line continues - read next and join
+						(let ([base-indent (count-indent raw start-line-num)])
+							(let-values ([(next-raw next-line-num lines-consumed)
+														(read-continued-line port (add1 start-line-num))])
+								(if (not next-raw)
+										(error (format "Line ~a: Line continuation at end of file" start-line-num))
+										(let ([next-indent (count-indent next-raw next-line-num)])
+											(if (not (= base-indent next-indent))
+													(error (format "Line ~a: Continuation line must have same indentation (expected ~a tabs, got ~a)"
+																				 next-line-num base-indent next-indent))
+													;; Join lines: strip \ from first, concatenate with space
+													(let ([joined (string-append (strip-continuation raw) " " (string-trim next-raw #:right? #f))])
+														(values joined start-line-num (add1 lines-consumed))))))))
+						;; No continuation
+						(values raw start-line-num 1)))))
+
 (define (read-all-lines port)
 	(let loop ([lines '()] [idx 1])
-		(let ([raw (read-line port)])
-			(if (eof-object? raw)
+		(let-values ([(raw line-num lines-consumed) (read-continued-line port idx)])
+			(if (not raw)
 					(reverse lines)
-					(loop (cons (line (count-indent raw idx) (tokenize-line raw) idx) lines)
-								(add1 idx))))))
+					(loop (cons (line (count-indent raw line-num) (tokenize-line raw) line-num) lines)
+								(+ idx lines-consumed))))))
 
 ;; --- The Reader Interface ---
 

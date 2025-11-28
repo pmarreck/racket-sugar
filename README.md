@@ -9,6 +9,7 @@ A Racket language variant that uses significant **tab-based indentation** instea
 ### Key Features
 
 - **Tab-based significant indentation** - Structure code without parentheses
+- **Line continuation** - `\` at end of line continues to next (same-indented) line
 - **Infix operators** - `(a ~+ b)` for readable binary operations
 - **Persistent vectors** - `[]` creates immutable, structurally-shared vectors with O(log32 n) operations
 - **Persistent hash maps** - `{}` creates HAMTs (Hash Array Mapped Tries) with O(log64 n) operations
@@ -236,6 +237,36 @@ displayln (quadratic 1 2 1 3) ; 16
 ```
 
 Note: The `~` prefix is only special when followed by an identifier. The tilde character in format strings (`~a`, `~s`, etc.) is unaffected.
+
+### Line Continuation (`\`)
+
+Long lines can be continued using `\` at the end of a line. The continuation line **must have the same indentation level** as the original line:
+
+```
+#lang tab-racket
+
+;; Long function calls can span multiple lines
+define result (some-long-function-name "first-arg" \
+               "second-arg" \
+               "third-arg")
+
+;; Works in function bodies too
+define (process-data data)
+	transform data \
+	filter-valid \
+	aggregate
+
+;; Multiple continuations chain together
+define message (string-append "This is a very " \
+                "long string that " \
+                "spans multiple lines")
+```
+
+**Rules:**
+- `\` must be the last non-whitespace character on the line
+- Continuation line must have identical tab indentation (or error)
+- `\` at EOF is an error (nothing to continue to)
+- `\` inside strings (like `"\n"`) is not treated as continuation
 
 ### Persistent Vector API
 
@@ -535,7 +566,6 @@ At 100K elements, persistent operations are ~1.5-2x slower than mutable equivale
 ## Limitations
 
 - **Tabs only** - Spaces for indentation cause an error
-- **No continuation lines** - Line continuation with `\` is not yet implemented
 - Full Racket semantics apply after parsing
 - Persistent vectors use 32-way branching (max ~1 billion elements efficiently)
 - Use `.trk` extension for tab-racket files to distinguish from standard `.rkt` files
