@@ -1,0 +1,249 @@
+#lang tab-racket/typed
+
+;; SIEVE-2 Cache Implementation (2-bit metadata) - Typed Variant
+;; A variant of SIEVE using a 2-bit counter (0-3) instead of a 1-bit flag
+;;
+;; Differences from 1-bit SIEVE:
+;;   - Each entry has a 2-bit counter (0-3) instead of a boolean
+;;   - On hit: increment counter (saturates at 3)
+;;   - On hand pass: decrement counter (saturates at 0)
+;;   - Evict when counter = 0
+;;
+;; This gives frequently accessed items more "staying power"
+
+;; ============================================================================
+;; Type-safe helpers
+;; ============================================================================
+
+: get-int (-> Any Integer Integer)
+define (get-int val default)
+	if (exact-integer? val)
+		cast val Integer
+		default
+
+;; ============================================================================
+;; Helper Functions
+;; ============================================================================
+
+;; Remove element at index from vector
+: vec-remove-at (-> Any Integer Any)
+define (vec-remove-at v idx)
+	define len (pvector-length v)
+	: loop (-> Integer Any Any)
+	define (loop i acc)
+		if (>= i len)
+			acc
+			if (= i idx)
+				loop (+ i 1) acc
+				loop (+ i 1) (pvector-push acc (pvector-ref v i))
+	loop 0 []
+
+;; Get index of element in vector, or -1 if not found
+: vec-index-of (-> Any Any Integer)
+define (vec-index-of v elem)
+	define len (pvector-length v)
+	: loop (-> Integer Integer)
+	define (loop i)
+		cond
+			(>= i len) -1
+			(equal? (pvector-ref v i) elem) i
+			else
+				loop (+ i 1)
+	loop 0
+
+;; Check if element is in vector
+: vec-contains? (-> Any Any Boolean)
+define (vec-contains? v elem)
+	>= (vec-index-of v elem) 0
+
+;; ============================================================================
+;; SIEVE-2 Core Operations (2-bit counter)
+;; ============================================================================
+
+;; Create an empty SIEVE-2 cache
+;; Structure: {:cache data-map :queue fifo-vec :counter counter-map :hand index :capacity n}
+: make-sieve2 (-> Integer Any)
+define (make-sieve2 capacity)
+	{:cache {} :queue [] :counter {} :hand 0 :capacity capacity}
+
+;; Get cache size
+: sieve2-size (-> Any Integer)
+define (sieve2-size cache)
+	pvector-length (hamt-ref cache :queue)
+
+;; Check if cache is full
+: sieve2-full? (-> Any Boolean)
+define (sieve2-full? cache)
+	>= (sieve2-size cache) (get-int (hamt-ref cache :capacity) 0)
+
+;; Get counter value for a key (0-3)
+: get-counter (-> Any Any Integer)
+define (get-counter cache key)
+	define counter-map (hamt-ref cache :counter)
+	if (hamt-contains? counter-map key)
+		get-int (hamt-ref counter-map key) 0
+		0
+
+;; Increment counter (saturates at 3)
+: inc-counter (-> Any Any Any)
+define (inc-counter cache key)
+	define current (get-counter cache key)
+	define new-val (min 3 (+ current 1))
+	hamt-set cache :counter (hamt-set (hamt-ref cache :counter) key new-val)
+
+;; Decrement counter (saturates at 0)
+: dec-counter (-> Any Any Any)
+define (dec-counter cache key)
+	define current (get-counter cache key)
+	define new-val (max 0 (- current 1))
+	hamt-set cache :counter (hamt-set (hamt-ref cache :counter) key new-val)
+
+;; Evict one item using SIEVE-2 algorithm
+;; Hand scans from tail toward head
+;; If counter > 0: decrement counter, move hand, keep item in place
+;; If counter = 0: evict item
+: sieve2-evict (-> Any Any)
+define (sieve2-evict cache)
+	define queue (hamt-ref cache :queue)
+	define len (pvector-length queue)
+	if (= len 0)
+		cache
+		let
+			((raw-hand (get-int (hamt-ref cache :hand) (- len 1))))
+			;; Ensure hand is in valid range, default to tail
+			define hand (if (>= raw-hand len) (- len 1) (if (< raw-hand 0) (- len 1) raw-hand))
+			: scan (-> Any Integer Integer Any)
+			define (scan c h iterations)
+				if (>= iterations len)
+					;; Fallback: evict at current hand position
+					let
+						((victim (pvector-ref (hamt-ref c :queue) h)))
+						define new-queue (vec-remove-at (hamt-ref c :queue) h)
+						define new-cache-data (hamt-remove (hamt-ref c :cache) victim)
+						define new-counter (hamt-remove (hamt-ref c :counter) victim)
+						define new-len (pvector-length new-queue)
+						;; After eviction, hand moves toward head (decrement)
+						define new-hand (if (> h 0) (- h 1) (max 0 (- new-len 1)))
+						hamt-set (hamt-set (hamt-set (hamt-set c :queue new-queue) :cache new-cache-data) :counter new-counter) :hand new-hand
+					let
+						((key (pvector-ref (hamt-ref c :queue) h)))
+						define cnt (get-counter c key)
+						if (> cnt 0)
+							let
+								((c2 (dec-counter c key)))
+								;; Move hand toward head (decrement index), wrap to tail if at head
+								define cur-len (pvector-length (hamt-ref c2 :queue))
+								define next-h (if (> h 0) (- h 1) (- cur-len 1))
+								scan c2 next-h (+ iterations 1)
+							;; Counter is 0 - evict this item
+							let
+								((victim key))
+								define new-queue (vec-remove-at (hamt-ref c :queue) h)
+								define new-cache-data (hamt-remove (hamt-ref c :cache) victim)
+								define new-counter (hamt-remove (hamt-ref c :counter) victim)
+								define new-len (pvector-length new-queue)
+								;; After eviction, hand moves toward head (decrement)
+								define new-hand (if (> h 0) (- h 1) (max 0 (- new-len 1)))
+								hamt-set (hamt-set (hamt-set (hamt-set c :queue new-queue) :cache new-cache-data) :counter new-counter) :hand new-hand
+			scan cache hand 0
+
+;; ============================================================================
+;; Main API
+;; ============================================================================
+
+;; Get value from cache
+;; On hit: increment counter (saturates at 3)
+: sieve2-get (-> Any Any Any)
+define (sieve2-get cache key)
+	define cache-data (hamt-ref cache :cache)
+	if (hamt-contains? cache-data key)
+		let
+			((value (hamt-ref cache-data key)))
+			define new-cache (inc-counter cache key)
+			{:found #t :value value :cache new-cache}
+		{:found #f :value #f :cache cache}
+
+;; Put value into cache
+;; New items inserted at head (index 0) with counter=0
+: sieve2-put (-> Any Any Any Any)
+define (sieve2-put cache key value)
+	define cache-data (hamt-ref cache :cache)
+	define queue (hamt-ref cache :queue)
+	;; If key already exists, update value and increment counter
+	if (vec-contains? queue key)
+		let
+			((new-cache-data (hamt-set cache-data key value)))
+			define cache1 (hamt-set cache :cache new-cache-data)
+			inc-counter cache1 key
+		;; New key - may need to evict
+		let
+			((cache1 (if (sieve2-full? cache) (sieve2-evict cache) cache)))
+			;; Insert at head (prepend to queue)
+			define old-queue (hamt-ref cache1 :queue)
+			define new-queue (pvector-push [] key)
+			define len (pvector-length old-queue)
+			: build-queue (-> Integer Any Any)
+			define (build-queue i acc)
+				if (>= i len)
+					acc
+					build-queue (+ i 1) (pvector-push acc (pvector-ref old-queue i))
+			define final-queue (build-queue 0 new-queue)
+			define new-cache-data (hamt-set (hamt-ref cache1 :cache) key value)
+			define new-counter (hamt-set (hamt-ref cache1 :counter) key 0)
+			;; Hand position: increment since we inserted at head
+			define old-hand (get-int (hamt-ref cache1 :hand) 0)
+			define new-len (pvector-length final-queue)
+			define new-hand (min (+ old-hand 1) (- new-len 1))
+			hamt-set (hamt-set (hamt-set (hamt-set cache1 :queue final-queue) :cache new-cache-data) :counter new-counter) :hand new-hand
+
+;; ============================================================================
+;; Demo
+;; ============================================================================
+
+displayln "SIEVE-2 Cache Demo (2-bit counter, Typed)"
+displayln "=========================================="
+displayln ""
+
+define cache (make-sieve2 5)
+displayln "Created SIEVE-2 cache with capacity 5"
+
+displayln ""
+displayln "Inserting :a, :b, :c..."
+define c1 (sieve2-put cache :a 1)
+define c2 (sieve2-put c1 :b 2)
+define c3 (sieve2-put c2 :c 3)
+displayln (format "  Cache size: ~a" (sieve2-size c3))
+
+displayln ""
+displayln "Accessing :a three times (counter -> 3)..."
+define r1 (sieve2-get c3 :a)
+define c4 (hamt-ref r1 :cache)
+define r2 (sieve2-get c4 :a)
+define c5 (hamt-ref r2 :cache)
+define r3 (sieve2-get c5 :a)
+define c6 (hamt-ref r3 :cache)
+displayln (format "  :a counter: ~a" (get-counter c6 :a))
+displayln (format "  :b counter: ~a" (get-counter c6 :b))
+displayln (format "  :c counter: ~a" (get-counter c6 :c))
+
+displayln ""
+displayln "Inserting :d, :e (filling cache)..."
+define c7 (sieve2-put c6 :d 4)
+define c8 (sieve2-put c7 :e 5)
+displayln (format "  Cache size: ~a" (sieve2-size c8))
+
+displayln ""
+displayln "Inserting :f (triggers eviction)..."
+define c9 (sieve2-put c8 :f 6)
+displayln (format "  Cache size after eviction: ~a" (sieve2-size c9))
+
+;; Check what was evicted - :b should be gone (counter was 0)
+define rb (sieve2-get c9 :b)
+define ra (sieve2-get c9 :a)
+displayln (format "  :b still in cache (counter was 0): ~a" (hamt-ref rb :found))
+displayln (format "  :a still in cache (counter was 3): ~a" (hamt-ref ra :found))
+
+displayln ""
+displayln "With 2-bit counters, frequently accessed items survive multiple eviction scans."
+displayln ""
+displayln "Demo complete!"

@@ -1,7 +1,37 @@
 #lang tab-racket
 
-;; Benchmark: ARC vs S3-FIFO Cache Performance
-;; Compares hit rate and operations per second
+;; Comprehensive Cache Benchmark: LRU vs ARC vs S3-FIFO vs SIEVE vs SIEVE-2
+;; Compares hit rate across multiple access patterns
+;;
+;; Configuration via environment variables:
+;;   BENCH_OPS - number of operations per test (default: 50000)
+;;   BENCH_SEED - random seed for reproducibility (default: time-based)
+;;
+;; Example: BENCH_OPS=100000 BENCH_SEED=42 racket tests/cache-bench.trk
+
+;; Parse ops count from env var, default to 50000
+define ops-env (getenv "BENCH_OPS")
+define default-ops 50000
+define bench-ops
+	if ops-env
+		let
+			((parsed (string->number ops-env)))
+			if parsed parsed default-ops
+		default-ops
+
+;; Generate seed from env var or time-based
+define seed-env (getenv "BENCH_SEED")
+define seed
+	if seed-env
+		let
+			((parsed (string->number seed-env)))
+			if parsed parsed (modulo (current-milliseconds) (expt 2 31))
+		modulo (current-milliseconds) (expt 2 31)
+
+random-seed seed
+displayln (format "Random seed: ~a (use BENCH_SEED=~a to reproduce)" seed seed)
+displayln (format "Operations per test: ~a (use BENCH_OPS=N to change)" bench-ops)
+displayln ""
 
 ;; ============================================================================
 ;; Common Helpers
@@ -48,84 +78,276 @@ define (vec-peek v)
 		#f
 		pvector-ref v 0
 
+define (vec-remove-at v idx)
+	define len (pvector-length v)
+	define (loop i acc)
+		if (>= i len)
+			acc
+			if (= i idx)
+				loop (+ i 1) acc
+				loop (+ i 1) (pvector-push acc (pvector-ref v i))
+	loop 0 []
+
+define (vec-index-of v elem)
+	define len (pvector-length v)
+	define (loop i)
+		cond
+			(>= i len) -1
+			(equal? (pvector-ref v i) elem) i
+			else
+				loop (+ i 1)
+	loop 0
+
+define (vec-prepend v elem)
+	define len (pvector-length v)
+	define (loop i acc)
+		if (>= i len)
+			acc
+			loop (+ i 1) (pvector-push acc (pvector-ref v i))
+	loop 0 (pvector-push [] elem)
+
 ;; ============================================================================
-;; ARC Implementation (simplified for benchmark)
+;; LRU Implementation (baseline)
 ;; ============================================================================
+
+;; Simple LRU: queue with most-recently-used at end, evict from front
+define (lru-make capacity)
+	{:cache {} :queue [] :capacity capacity}
+
+define (lru-size c)
+	pvector-length (hamt-ref c :queue)
+
+define (lru-full? c)
+	>= (lru-size c) (hamt-ref c :capacity)
+
+define (lru-evict c)
+	define queue (hamt-ref c :queue)
+	if (pvector-empty? queue)
+		c
+		let
+			((victim (pvector-ref queue 0)))
+			define new-queue (vec-dequeue queue)
+			define new-cache (hamt-remove (hamt-ref c :cache) victim)
+			hamt-set (hamt-set c :queue new-queue) :cache new-cache
+
+define (lru-get c key)
+	define cache-data (hamt-ref c :cache)
+	if (hamt-contains? cache-data key)
+		let
+			((queue (hamt-ref c :queue)))
+			define new-queue (vec-move-to-end queue key)
+			{:hit #t :cache (hamt-set c :queue new-queue)}
+		{:hit #f :cache c}
+
+define (lru-put c key val)
+	define queue (hamt-ref c :queue)
+	;; If key exists, update and move to end
+	if (vec-contains? queue key)
+		let
+			((new-queue (vec-move-to-end queue key)))
+			define new-cache (hamt-set (hamt-ref c :cache) key val)
+			hamt-set (hamt-set c :queue new-queue) :cache new-cache
+		;; New key - may need to evict
+		let
+			((c1 (if (lru-full? c) (lru-evict c) c)))
+			define new-queue (pvector-push (hamt-ref c1 :queue) key)
+			define new-cache (hamt-set (hamt-ref c1 :cache) key val)
+			hamt-set (hamt-set c1 :queue new-queue) :cache new-cache
+
+;; ============================================================================
+;; ARC Implementation (per Megiddo & Modha, FAST 2003)
+;; ============================================================================
+;; ARC maintains 4 LRU lists:
+;;   T1: recent cache entries (seen once recently)
+;;   T2: frequent cache entries (seen at least twice recently)
+;;   B1: ghost entries evicted from T1 (metadata only)
+;;   B2: ghost entries evicted from T2 (metadata only)
+;; Parameter p is the target size for T1, adapted based on ghost hits.
 
 define (arc-make capacity)
 	{:cache {} :t1 [] :t2 [] :b1 [] :b2 [] :p 0 :cap capacity}
 
-define (arc-size c)
-	+ (pvector-length (hamt-ref c :t1)) (pvector-length (hamt-ref c :t2))
+define (arc-t1-len c) (pvector-length (hamt-ref c :t1))
+define (arc-t2-len c) (pvector-length (hamt-ref c :t2))
+define (arc-b1-len c) (pvector-length (hamt-ref c :b1))
+define (arc-b2-len c) (pvector-length (hamt-ref c :b2))
+define (arc-size c) (+ (arc-t1-len c) (arc-t2-len c))
 
+;; Evict LRU from T1 to B1
 define (arc-evict-t1 c)
 	define t1 (hamt-ref c :t1)
 	if (pvector-empty? t1)
 		c
 		let
 			((victim (pvector-ref t1 0)))
-			hamt-set (hamt-set (hamt-set c :t1 (vec-remove t1 victim)) :b1 (pvector-push (hamt-ref c :b1) victim)) :cache (hamt-remove (hamt-ref c :cache) victim)
+			define new-t1 (vec-dequeue t1)
+			define new-b1 (pvector-push (hamt-ref c :b1) victim)
+			define new-cache (hamt-remove (hamt-ref c :cache) victim)
+			hamt-set (hamt-set (hamt-set c :t1 new-t1) :b1 new-b1) :cache new-cache
 
+;; Evict LRU from T2 to B2
 define (arc-evict-t2 c)
 	define t2 (hamt-ref c :t2)
 	if (pvector-empty? t2)
 		c
 		let
 			((victim (pvector-ref t2 0)))
-			hamt-set (hamt-set (hamt-set c :t2 (vec-remove t2 victim)) :b2 (pvector-push (hamt-ref c :b2) victim)) :cache (hamt-remove (hamt-ref c :cache) victim)
+			define new-t2 (vec-dequeue t2)
+			define new-b2 (pvector-push (hamt-ref c :b2) victim)
+			define new-cache (hamt-remove (hamt-ref c :cache) victim)
+			hamt-set (hamt-set (hamt-set c :t2 new-t2) :b2 new-b2) :cache new-cache
 
-define (arc-replace c key)
-	define t1-len (pvector-length (hamt-ref c :t1))
+;; REPLACE subroutine from paper Figure 4
+;; If T1 is not empty AND (|T1| > p OR (key is in B2 AND |T1| == p))
+;;   then evict from T1
+;; else evict from T2
+define (arc-replace c key in-b2)
+	define t1 (hamt-ref c :t1)
+	define t1-len (pvector-length t1)
 	define p (hamt-ref c :p)
-	if (> t1-len p)
+	define should-evict-t1 (and (not (pvector-empty? t1)) (or (> t1-len p) (and in-b2 (= t1-len p))))
+	if should-evict-t1
 		arc-evict-t1 c
 		arc-evict-t2 c
 
+;; Prune B1 if |T1| + |B1| > c (maintain invariant)
+define (arc-prune-b1 c)
+	define cap (hamt-ref c :cap)
+	define t1-len (arc-t1-len c)
+	define b1-len (arc-b1-len c)
+	if (> (+ t1-len b1-len) cap)
+		;; Remove LRU from B1
+		hamt-set c :b1 (vec-dequeue (hamt-ref c :b1))
+		c
+
+;; Prune B2 if |T1| + |T2| + |B1| + |B2| > 2c
+define (arc-prune-b2 c)
+	define cap (hamt-ref c :cap)
+	define total (+ (arc-t1-len c) (arc-t2-len c) (arc-b1-len c) (arc-b2-len c))
+	if (> total (* 2 cap))
+		hamt-set c :b2 (vec-dequeue (hamt-ref c :b2))
+		c
+
+;; Cache hit: move to MRU of T2
 define (arc-get c key)
 	define t1 (hamt-ref c :t1)
 	define t2 (hamt-ref c :t2)
 	cond
+		;; Case I: Hit in T1 - move to MRU of T2
 		(vec-contains? t1 key)
-			{:hit #t :cache (hamt-set (hamt-set c :t1 (vec-remove t1 key)) :t2 (pvector-push t2 key))}
+			let
+				((new-t1 (vec-remove t1 key)))
+				define new-t2 (pvector-push t2 key)
+				{:hit #t :cache (hamt-set (hamt-set c :t1 new-t1) :t2 new-t2)}
+		;; Case I: Hit in T2 - move to MRU of T2
 		(vec-contains? t2 key)
 			{:hit #t :cache (hamt-set c :t2 (vec-move-to-end t2 key))}
 		else
 			{:hit #f :cache c}
 
+;; Cache put - handles all cases from paper Figure 4
 define (arc-put c key val)
 	define cap (hamt-ref c :cap)
 	define t1 (hamt-ref c :t1)
+	define t2 (hamt-ref c :t2)
 	define b1 (hamt-ref c :b1)
 	define b2 (hamt-ref c :b2)
+	define p (hamt-ref c :p)
+	define b1-len (pvector-length b1)
+	define b2-len (pvector-length b2)
 	cond
+		;; Already in T1 or T2 - handled by arc-get, but handle here too
 		(vec-contains? t1 key)
-			hamt-set (hamt-set (hamt-set c :t1 (vec-remove t1 key)) :t2 (pvector-push (hamt-ref c :t2) key)) :cache (hamt-set (hamt-ref c :cache) key val)
+			let
+				((new-t1 (vec-remove t1 key)))
+				define new-t2 (pvector-push t2 key)
+				hamt-set (hamt-set (hamt-set c :t1 new-t1) :t2 new-t2) :cache (hamt-set (hamt-ref c :cache) key val)
+		(vec-contains? t2 key)
+			hamt-set (hamt-set c :t2 (vec-move-to-end t2 key)) :cache (hamt-set (hamt-ref c :cache) key val)
+		;; Case II: Hit in B1 (ghost) - adapt p upward
 		(vec-contains? b1 key)
 			let
-				((c1 (hamt-set c :p (min cap (+ (hamt-ref c :p) 1)))))
-				define c2 (if (>= (arc-size c1) cap) (arc-replace c1 key) c1)
-				hamt-set (hamt-set (hamt-set c2 :b1 (vec-remove (hamt-ref c2 :b1) key)) :t2 (pvector-push (hamt-ref c2 :t2) key)) :cache (hamt-set (hamt-ref c2 :cache) key val)
+				;; Adaptation: increase p
+				;; delta1 = 1 if |B1| >= |B2|, else |B2|/|B1|
+				((delta1 (if (>= b1-len (max 1 b2-len)) 1 (max 1 (quotient b2-len (max 1 b1-len))))))
+				define new-p (min cap (+ p delta1))
+				define c1 (hamt-set c :p new-p)
+				;; REPLACE with in-b2 = #f
+				define c2 (if (>= (arc-size c1) cap) (arc-replace c1 key #f) c1)
+				;; Move from B1 to MRU of T2
+				define new-b1 (vec-remove (hamt-ref c2 :b1) key)
+				define new-t2 (pvector-push (hamt-ref c2 :t2) key)
+				define new-cache (hamt-set (hamt-ref c2 :cache) key val)
+				hamt-set (hamt-set (hamt-set c2 :b1 new-b1) :t2 new-t2) :cache new-cache
+		;; Case III: Hit in B2 (ghost) - adapt p downward
+		(vec-contains? b2 key)
+			let
+				;; Adaptation: decrease p
+				;; delta2 = 1 if |B2| >= |B1|, else |B1|/|B2|
+				((delta2 (if (>= b2-len (max 1 b1-len)) 1 (max 1 (quotient b1-len (max 1 b2-len))))))
+				define new-p (max 0 (- p delta2))
+				define c1 (hamt-set c :p new-p)
+				;; REPLACE with in-b2 = #t
+				define c2 (if (>= (arc-size c1) cap) (arc-replace c1 key #t) c1)
+				;; Move from B2 to MRU of T2
+				define new-b2 (vec-remove (hamt-ref c2 :b2) key)
+				define new-t2 (pvector-push (hamt-ref c2 :t2) key)
+				define new-cache (hamt-set (hamt-ref c2 :cache) key val)
+				hamt-set (hamt-set (hamt-set c2 :b2 new-b2) :t2 new-t2) :cache new-cache
+		;; Case IV: Not in T1, T2, B1, or B2 - completely new
 		else
 			let
-				((c1 (if (>= (arc-size c) cap) (arc-replace c key) c)))
-				hamt-set (hamt-set c1 :t1 (pvector-push (hamt-ref c1 :t1) key)) :cache (hamt-set (hamt-ref c1 :cache) key val)
+				((t1-len (pvector-length t1)))
+				define l1-len (+ t1-len b1-len)
+				cond
+					;; Case IV(A): L1 = T1 + B1 has exactly c pages
+					(= l1-len cap)
+						if (< t1-len cap)
+							;; B1 not empty - delete LRU from B1, then REPLACE
+							let
+								((c1 (hamt-set c :b1 (vec-dequeue b1))))
+								define c2 (arc-replace c1 key #f)
+								define new-t1 (pvector-push (hamt-ref c2 :t1) key)
+								define new-cache (hamt-set (hamt-ref c2 :cache) key val)
+								hamt-set (hamt-set c2 :t1 new-t1) :cache new-cache
+							;; B1 empty - delete LRU from T1 (no ghost)
+							let
+								((victim (pvector-ref t1 0)))
+								define new-t1 (pvector-push (vec-dequeue t1) key)
+								define new-cache (hamt-set (hamt-remove (hamt-ref c :cache) victim) key val)
+								hamt-set (hamt-set c :t1 new-t1) :cache new-cache
+					;; Case IV(B): L1 has less than c pages
+					else
+						let
+							((total (+ t1-len (pvector-length t2) b1-len b2-len)))
+							;; If total >= 2c, delete LRU from B2
+							define need-prune-b2 (>= total (* 2 cap))
+							define c1 (if need-prune-b2 (hamt-set c :b2 (vec-dequeue b2)) c)
+							;; If cache is full, REPLACE
+							define c2 (if (>= (arc-size c1) cap) (arc-replace c1 key #f) c1)
+							;; Insert at MRU of T1
+							define new-t1 (pvector-push (hamt-ref c2 :t1) key)
+							define new-cache (hamt-set (hamt-ref c2 :cache) key val)
+							hamt-set (hamt-set c2 :t1 new-t1) :cache new-cache
 
 ;; ============================================================================
-;; S3-FIFO Implementation (simplified for benchmark)
+;; S3-FIFO Implementation (per Yang et al., SOSP 2023)
 ;; ============================================================================
+;; S3-FIFO uses three FIFO queues:
+;;   S (Small): 10% of cache, filters one-hit-wonders
+;;   M (Main): 90% of cache, uses reinsertion for freq > 0
+;;   G (Ghost): tracks recently evicted keys (no data), size = M capacity
+;; Key insight: most objects accessed only once; evict them quickly from S
 
 define (s3-make capacity)
 	define s-cap (max 1 (quotient capacity 10))
-	{:cache {} :s [] :m [] :freq {} :s-cap s-cap :m-cap (- capacity s-cap)}
+	define m-cap (- capacity s-cap)
+	{:cache {} :s [] :m [] :g [] :freq {} :s-cap s-cap :m-cap m-cap :g-cap m-cap}
 
-define (s3-s-size c)
-	pvector-length (hamt-ref c :s)
-
-define (s3-m-size c)
-	pvector-length (hamt-ref c :m)
-
-define (s3-size c)
-	+ (s3-s-size c) (s3-m-size c)
+define (s3-s-size c) (pvector-length (hamt-ref c :s))
+define (s3-m-size c) (pvector-length (hamt-ref c :m))
+define (s3-g-size c) (pvector-length (hamt-ref c :g))
+define (s3-size c) (+ (s3-s-size c) (s3-m-size c))
 
 define (s3-get-freq c key)
 	define fm (hamt-ref c :freq)
@@ -136,14 +358,61 @@ define (s3-get-freq c key)
 define (s3-inc-freq c key)
 	hamt-set c :freq (hamt-set (hamt-ref c :freq) key (min 3 (+ (s3-get-freq c key) 1)))
 
+;; Check if key is in ghost queue
+define (s3-in-ghost? c key)
+	vec-contains? (hamt-ref c :g) key
+
+;; Add to ghost queue, evicting oldest if full
+define (s3-add-ghost c key)
+	define g (hamt-ref c :g)
+	define g-cap (hamt-ref c :g-cap)
+	define g1 (if (>= (pvector-length g) g-cap) (vec-dequeue g) g)
+	hamt-set c :g (pvector-push g1 key)
+
+;; Remove from ghost queue
+define (s3-remove-ghost c key)
+	hamt-set c :g (vec-remove (hamt-ref c :g) key)
+
+;; Evict from M queue using FIFO-Reinsertion:
+;; If freq > 0: reinsert at tail with freq-1
+;; If freq = 0: evict
 define (s3-evict-m c)
 	define m (hamt-ref c :m)
+	define (scan c2 iters)
+		define m2 (hamt-ref c2 :m)
+		define done (or (pvector-empty? m2) (>= iters (pvector-length m2)))
+		if done
+			;; Fallback: evict head if non-empty
+			if (pvector-empty? m2)
+				c2
+				let
+					((victim (vec-peek m2)))
+					define new-m (vec-dequeue m2)
+					define new-cache (hamt-remove (hamt-ref c2 :cache) victim)
+					define new-freq (hamt-remove (hamt-ref c2 :freq) victim)
+					hamt-set (hamt-set (hamt-set c2 :m new-m) :cache new-cache) :freq new-freq
+			let
+				((candidate (vec-peek m2)))
+				define freq (s3-get-freq c2 candidate)
+				if (= freq 0)
+					;; Evict this one
+					let
+						((new-m (vec-dequeue m2)))
+						define new-cache (hamt-remove (hamt-ref c2 :cache) candidate)
+						define new-freq (hamt-remove (hamt-ref c2 :freq) candidate)
+						hamt-set (hamt-set (hamt-set c2 :m new-m) :cache new-cache) :freq new-freq
+					;; Reinsert with freq-1
+					let
+						((new-m (pvector-push (vec-dequeue m2) candidate)))
+						define new-freq (hamt-set (hamt-ref c2 :freq) candidate (- freq 1))
+						scan (hamt-set (hamt-set c2 :m new-m) :freq new-freq) (+ iters 1)
 	if (pvector-empty? m)
 		c
-		let
-			((victim (vec-peek m)))
-			hamt-set (hamt-set (hamt-set c :m (vec-dequeue m)) :cache (hamt-remove (hamt-ref c :cache) victim)) :freq (hamt-remove (hamt-ref c :freq) victim)
+		scan c 0
 
+;; Evict from S queue:
+;; If freq > 0: move to M (with freq reset to 0)
+;; If freq = 0: evict to ghost
 define (s3-evict-s c)
 	define s (hamt-ref c :s)
 	if (pvector-empty? s)
@@ -153,10 +422,18 @@ define (s3-evict-s c)
 			define freq (s3-get-freq c victim)
 			define c1 (hamt-set c :s (vec-dequeue s))
 			if (> freq 0)
+				;; Promote to M with freq=0
 				let
 					((c2 (if (>= (s3-m-size c1) (hamt-ref c1 :m-cap)) (s3-evict-m c1) c1)))
-					hamt-set (hamt-set c2 :m (pvector-push (hamt-ref c2 :m) victim)) :freq (hamt-set (hamt-ref c2 :freq) victim 0)
-				hamt-set (hamt-set c1 :cache (hamt-remove (hamt-ref c1 :cache) victim)) :freq (hamt-remove (hamt-ref c1 :freq) victim)
+					define new-m (pvector-push (hamt-ref c2 :m) victim)
+					define new-freq (hamt-set (hamt-ref c2 :freq) victim 0)
+					hamt-set (hamt-set c2 :m new-m) :freq new-freq
+				;; Evict to ghost (remove from cache, add to G)
+				let
+					((new-cache (hamt-remove (hamt-ref c1 :cache) victim)))
+					define new-freq (hamt-remove (hamt-ref c1 :freq) victim)
+					define c2 (hamt-set (hamt-set c1 :cache new-cache) :freq new-freq)
+					s3-add-ghost c2 victim
 
 define (s3-get c key)
 	if (hamt-contains? (hamt-ref c :cache) key)
@@ -167,155 +444,381 @@ define (s3-put c key val)
 	define s (hamt-ref c :s)
 	define m (hamt-ref c :m)
 	cond
+		;; Already in S - increment freq
 		(vec-contains? s key)
 			hamt-set (s3-inc-freq c key) :cache (hamt-set (hamt-ref c :cache) key val)
+		;; Already in M - increment freq
 		(vec-contains? m key)
 			hamt-set (s3-inc-freq c key) :cache (hamt-set (hamt-ref c :cache) key val)
+		;; In ghost - insert to M (not S), remove from ghost
+		(s3-in-ghost? c key)
+			let
+				((c1 (s3-remove-ghost c key)))
+				;; May need to evict from M first
+				define c2 (if (>= (s3-m-size c1) (hamt-ref c1 :m-cap)) (s3-evict-m c1) c1)
+				define new-m (pvector-push (hamt-ref c2 :m) key)
+				define new-cache (hamt-set (hamt-ref c2 :cache) key val)
+				define new-freq (hamt-set (hamt-ref c2 :freq) key 0)
+				hamt-set (hamt-set (hamt-set c2 :m new-m) :cache new-cache) :freq new-freq
+		;; New key - insert to S
 		else
 			let
 				((c1 (if (>= (s3-s-size c) (hamt-ref c :s-cap)) (s3-evict-s c) c)))
-				hamt-set (hamt-set (hamt-set c1 :s (pvector-push (hamt-ref c1 :s) key)) :cache (hamt-set (hamt-ref c1 :cache) key val)) :freq (hamt-set (hamt-ref c1 :freq) key 0)
+				define new-s (pvector-push (hamt-ref c1 :s) key)
+				define new-cache (hamt-set (hamt-ref c1 :cache) key val)
+				define new-freq (hamt-set (hamt-ref c1 :freq) key 0)
+				hamt-set (hamt-set (hamt-set c1 :s new-s) :cache new-cache) :freq new-freq
 
 ;; ============================================================================
-;; Benchmark
+;; SIEVE Implementation (1-bit)
 ;; ============================================================================
 
-;; Generate Zipf-like access pattern (popular keys accessed more often)
-define (zipf-key n max-keys)
-	;; Simple approximation: square root bias toward lower keys
-	define k (exact-floor (expt (random) 2) * max-keys)
-	min k (- max-keys 1)
+define (sieve-make capacity)
+	{:cache {} :queue [] :visited {} :hand 0 :capacity capacity}
 
-;; Run benchmark for a cache implementation
-define (run-bench name make-fn get-fn put-fn capacity ops max-keys)
-	displayln (format "~a: capacity=~a, ops=~a, keys=~a" name capacity ops max-keys)
-	define start (current-inexact-milliseconds)
-	define (loop i cache hits)
-		if (>= i ops)
-			{:cache cache :hits hits}
-			let
-				((key (modulo (+ (* i 7) (modulo i 13)) max-keys)))
-				define result (get-fn cache key)
-				define hit (hamt-ref result :hit)
-				define c2 (hamt-ref result :cache)
-				define c3 (if hit c2 (put-fn c2 key i))
-				loop (+ i 1) c3 (if hit (+ hits 1) hits)
-	define result (loop 0 (make-fn capacity) 0)
-	define elapsed (- (current-inexact-milliseconds) start)
-	define hits (hamt-ref result :hits)
-	define hit-rate (* 100.0 (/ hits ops))
-	displayln (format "  Hit rate: ~a% (~a/~a)" (/ (round (* hit-rate 10)) 10.0) hits ops)
-	displayln (format "  Time: ~ams" (round elapsed))
-	displayln (format "  Ops/sec: ~a" (round (* 1000 (/ ops elapsed))))
-	displayln ""
-	hit-rate
+define (sieve-size c)
+	pvector-length (hamt-ref c :queue)
+
+define (sieve-full? c)
+	>= (sieve-size c) (hamt-ref c :capacity)
+
+define (sieve-visited? c key)
+	define vm (hamt-ref c :visited)
+	if (hamt-contains? vm key)
+		if (hamt-ref vm key) #t #f
+		#f
+
+define (sieve-set-visited c key)
+	hamt-set c :visited (hamt-set (hamt-ref c :visited) key #t)
+
+define (sieve-clear-visited c key)
+	hamt-set c :visited (hamt-set (hamt-ref c :visited) key #f)
+
+;; SIEVE eviction:
+;; Queue layout: index 0 = HEAD (newest), last index = TAIL (oldest)
+;; Hand starts at tail, moves toward head (decrementing index)
+;; After eviction, hand moves to prev (toward head, i.e., decrement)
+define (sieve-evict c)
+	define queue (hamt-ref c :queue)
+	define len (pvector-length queue)
+	if (= len 0)
+		c
+		let
+			((raw-hand (hamt-ref c :hand)))
+			;; Clamp hand to valid range, default to tail (len-1)
+			define hand (cond ((>= raw-hand len) (- len 1)) ((< raw-hand 0) (- len 1)) (else raw-hand))
+			define (scan c h iters)
+				if (>= iters len)
+					;; Fallback: evict at current position
+					let
+						((victim (pvector-ref (hamt-ref c :queue) h)))
+						define nq (vec-remove-at (hamt-ref c :queue) h)
+						define nl (pvector-length nq)
+						;; After eviction, hand moves toward head (decrement), wrap to tail if needed
+						define nh (if (> h 0) (- h 1) (max 0 (- nl 1)))
+						hamt-set (hamt-set (hamt-set (hamt-set c :queue nq) :cache (hamt-remove (hamt-ref c :cache) victim)) :visited (hamt-remove (hamt-ref c :visited) victim)) :hand nh
+					let
+						((key (pvector-ref (hamt-ref c :queue) h)))
+						if (sieve-visited? c key)
+							let
+								((c2 (sieve-clear-visited c key)))
+								define cl (pvector-length (hamt-ref c2 :queue))
+								;; Move hand toward head (decrement), wrap to tail if at head
+								define nh (if (> h 0) (- h 1) (- cl 1))
+								scan c2 nh (+ iters 1)
+							;; Found unvisited - evict it
+							let
+								((victim key))
+								define nq (vec-remove-at (hamt-ref c :queue) h)
+								define nl (pvector-length nq)
+								;; After eviction, hand moves toward head (decrement)
+								;; Since we removed item at h, items after h shift down
+								;; New hand should point to h-1 (toward head)
+								define nh (if (> h 0) (- h 1) (max 0 (- nl 1)))
+								hamt-set (hamt-set (hamt-set (hamt-set c :queue nq) :cache (hamt-remove (hamt-ref c :cache) victim)) :visited (hamt-remove (hamt-ref c :visited) victim)) :hand nh
+			scan c hand 0
+
+define (sieve-get c key)
+	if (hamt-contains? (hamt-ref c :cache) key)
+		{:hit #t :cache (sieve-set-visited c key)}
+		{:hit #f :cache c}
+
+define (sieve-put c key val)
+	define queue (hamt-ref c :queue)
+	if (>= (vec-index-of queue key) 0)
+		;; Key exists - update value and set visited
+		hamt-set (sieve-set-visited c key) :cache (hamt-set (hamt-ref c :cache) key val)
+		;; New key
+		let
+			((c1 (if (sieve-full? c) (sieve-evict c) c)))
+			;; Insert at head (prepend)
+			define nq (vec-prepend (hamt-ref c1 :queue) key)
+			define nl (pvector-length nq)
+			;; Hand adjustment: since we inserted at head (index 0), all existing indices shift +1
+			;; So hand (which pointed at some index) now points at index+1
+			;; But hand should stay pointing at the same logical item (toward tail)
+			define oh (hamt-ref c1 :hand)
+			define nh (min (+ oh 1) (- nl 1))
+			hamt-set (hamt-set (hamt-set (hamt-set c1 :queue nq) :cache (hamt-set (hamt-ref c1 :cache) key val)) :visited (hamt-set (hamt-ref c1 :visited) key #f)) :hand nh
 
 ;; ============================================================================
-;; Run Benchmarks
+;; SIEVE-2 Implementation (2-bit counter)
 ;; ============================================================================
 
-displayln "Cache Benchmark: ARC vs S3-FIFO"
-displayln "================================"
-displayln ""
+define (sieve2-make capacity)
+	{:cache {} :queue [] :counter {} :hand 0 :capacity capacity}
 
-;; Test 1: Temporal locality (recent keys accessed more)
-displayln "Test 1: Temporal Locality"
-displayln "-------------------------"
-displayln "Keys accessed more if recently used"
-displayln ""
+define (sieve2-size c)
+	pvector-length (hamt-ref c :queue)
 
-define capacity1 100
-define ops1 5000
-define keys1 200
+define (sieve2-full? c)
+	>= (sieve2-size c) (hamt-ref c :capacity)
 
-;; Access pattern biased toward recent keys
-define (pick-recent-key recent keys)
-	if (and (< (random 100) 70) (> (pvector-length recent) 0))
-		pvector-ref recent (random (min 20 (pvector-length recent)))
-		random keys
+define (sieve2-get-counter c key)
+	define cm (hamt-ref c :counter)
+	if (hamt-contains? cm key)
+		hamt-ref cm key
+		0
 
-define (update-recent recent key)
-	if (> (pvector-length recent) 50)
+define (sieve2-inc-counter c key)
+	hamt-set c :counter (hamt-set (hamt-ref c :counter) key (min 3 (+ (sieve2-get-counter c key) 1)))
+
+define (sieve2-dec-counter c key)
+	hamt-set c :counter (hamt-set (hamt-ref c :counter) key (max 0 (- (sieve2-get-counter c key) 1)))
+
+;; SIEVE-2 eviction: same as SIEVE but with counter instead of visited bit
+define (sieve2-evict c)
+	define queue (hamt-ref c :queue)
+	define len (pvector-length queue)
+	if (= len 0)
+		c
+		let
+			((raw-hand (hamt-ref c :hand)))
+			define hand (cond ((>= raw-hand len) (- len 1)) ((< raw-hand 0) (- len 1)) (else raw-hand))
+			define (scan c h iters)
+				if (>= iters len)
+					;; Fallback: evict at current position
+					let
+						((victim (pvector-ref (hamt-ref c :queue) h)))
+						define nq (vec-remove-at (hamt-ref c :queue) h)
+						define nl (pvector-length nq)
+						define nh (if (> h 0) (- h 1) (max 0 (- nl 1)))
+						hamt-set (hamt-set (hamt-set (hamt-set c :queue nq) :cache (hamt-remove (hamt-ref c :cache) victim)) :counter (hamt-remove (hamt-ref c :counter) victim)) :hand nh
+					let
+						((key (pvector-ref (hamt-ref c :queue) h)))
+						define cnt (sieve2-get-counter c key)
+						if (> cnt 0)
+							let
+								((c2 (sieve2-dec-counter c key)))
+								define cl (pvector-length (hamt-ref c2 :queue))
+								define nh (if (> h 0) (- h 1) (- cl 1))
+								scan c2 nh (+ iters 1)
+							;; Counter is 0 - evict
+							let
+								((victim key))
+								define nq (vec-remove-at (hamt-ref c :queue) h)
+								define nl (pvector-length nq)
+								define nh (if (> h 0) (- h 1) (max 0 (- nl 1)))
+								hamt-set (hamt-set (hamt-set (hamt-set c :queue nq) :cache (hamt-remove (hamt-ref c :cache) victim)) :counter (hamt-remove (hamt-ref c :counter) victim)) :hand nh
+			scan c hand 0
+
+define (sieve2-get c key)
+	if (hamt-contains? (hamt-ref c :cache) key)
+		{:hit #t :cache (sieve2-inc-counter c key)}
+		{:hit #f :cache c}
+
+define (sieve2-put c key val)
+	define queue (hamt-ref c :queue)
+	if (>= (vec-index-of queue key) 0)
+		hamt-set (sieve2-inc-counter c key) :cache (hamt-set (hamt-ref c :cache) key val)
+		let
+			((c1 (if (sieve2-full? c) (sieve2-evict c) c)))
+			define nq (vec-prepend (hamt-ref c1 :queue) key)
+			define oh (hamt-ref c1 :hand)
+			define nl (pvector-length nq)
+			define nh (min (+ oh 1) (- nl 1))
+			hamt-set (hamt-set (hamt-set (hamt-set c1 :queue nq) :cache (hamt-set (hamt-ref c1 :cache) key val)) :counter (hamt-set (hamt-ref c1 :counter) key 0)) :hand nh
+
+;; ============================================================================
+;; Benchmark Harness
+;; ============================================================================
+
+define (update-recent recent key max-size)
+	if (> (pvector-length recent) max-size)
 		pvector-push (vec-dequeue recent) key
 		pvector-push recent key
 
-define (run-temporal name make-fn get-fn put-fn cap ops keys)
-	displayln (format "~a: capacity=~a, ops=~a, keys=~a" name cap ops keys)
+;; Generic benchmark runner
+define (run-bench name make-fn get-fn put-fn cap ops key-gen-fn)
 	define start (current-inexact-milliseconds)
-	define (loop i cache hits recent)
+	define (loop i cache hits state)
 		if (>= i ops)
-			{:cache cache :hits hits}
+			{:hits hits :state state}
 			let
-				((key (pick-recent-key recent keys)))
+				((key-result (key-gen-fn i state)))
+				define key (hamt-ref key-result :key)
+				define new-state (hamt-ref key-result :state)
 				define result (get-fn cache key)
 				define hit (hamt-ref result :hit)
 				define c2 (hamt-ref result :cache)
 				define c3 (if hit c2 (put-fn c2 key i))
-				loop (+ i 1) c3 (if hit (+ hits 1) hits) (update-recent recent key)
-	define result (loop 0 (make-fn cap) 0 [])
+				loop (+ i 1) c3 (if hit (+ hits 1) hits) new-state
+	define result (loop 0 (make-fn cap) 0 {:recent []})
 	define elapsed (- (current-inexact-milliseconds) start)
 	define hits (hamt-ref result :hits)
 	define hit-rate (* 100.0 (/ hits ops))
-	displayln (format "  Hit rate: ~a% (~a/~a)" (/ (round (* hit-rate 10)) 10.0) hits ops)
-	displayln (format "  Time: ~ams" (round elapsed))
-	displayln ""
+	displayln (format "  ~a: ~a% (~ams)" name (/ (round (* hit-rate 10)) 10.0) (round elapsed))
 	hit-rate
 
-define arc-rate1 (run-temporal "ARC" arc-make arc-get arc-put capacity1 ops1 keys1)
-define s3-rate1 (run-temporal "S3-FIFO" s3-make s3-get s3-put capacity1 ops1 keys1)
+;; ============================================================================
+;; Access Pattern Generators
+;; ============================================================================
 
-displayln "Test 1 Results:"
-if (> s3-rate1 arc-rate1)
-	displayln (format "  S3-FIFO wins by ~a percentage points" (/ (round (* (- s3-rate1 arc-rate1) 10)) 10.0))
-	displayln (format "  ARC wins by ~a percentage points" (/ (round (* (- arc-rate1 s3-rate1) 10)) 10.0))
+;; Temporal locality: 70% chance to access one of 20 most recent keys
+define (make-temporal-gen max-keys)
+	lambda (i state)
+		define recent (hamt-ref state :recent)
+		define rlen (pvector-length recent)
+		define use-recent (and (< (random 100) 70) (> rlen 0))
+		define key
+			if use-recent
+				pvector-ref recent (random (min 20 rlen))
+				random max-keys
+		{:key key :state {:recent (update-recent recent key 50)}}
 
-displayln ""
-displayln "================================"
-displayln "Test 2: Hot/Cold Access Pattern"
-displayln "--------------------------------"
-displayln "10 hot keys (80% accesses) + many cold keys"
-displayln ""
+;; Hot/cold: 80% accesses to small hot set
+define (make-hotcold-gen hot-keys cold-keys)
+	lambda (i state)
+		define key
+			if (< (random 100) 80)
+				random hot-keys
+				+ hot-keys (random cold-keys)
+		{:key key :state state}
 
-;; Test 2: Hot/cold pattern
-define capacity2 50
-define ops2 5000
-define hot-keys 10
-define cold-keys 200
+;; Sequential scan with some hot keys
+define (make-scan-gen hot-keys scan-size)
+	lambda (i state)
+		define key
+			if (< (random 100) 30)
+				random hot-keys
+				+ hot-keys (modulo i scan-size)
+		{:key key :state state}
 
-define (pick-hotcold-key)
-	if (< (random 100) 80)
-		random hot-keys
-		+ hot-keys (random cold-keys)
+;; Zipf-like distribution (power law)
+define (make-zipf-gen max-keys)
+	lambda (i state)
+		;; Square root gives rough Zipf approximation
+		define raw-key (exact-floor (* (expt (random) 2) max-keys))
+		define key (min raw-key (- max-keys 1))
+		{:key key :state state}
 
-define (run-hotcold name make-fn get-fn put-fn cap ops)
-	displayln (format "~a: capacity=~a, ops=~a" name cap ops)
-	define start (current-inexact-milliseconds)
-	define (loop i cache hits)
-		if (>= i ops)
-			{:cache cache :hits hits}
+;; Loop/burst pattern: periodically revisit same sequence
+define (make-loop-gen loop-size total-keys)
+	lambda (i state)
+		define key
+			if (< (random 100) 60)
+				modulo i loop-size
+				random total-keys
+		{:key key :state state}
+
+;; Working set shift: hot set changes over time
+define (make-shift-gen set-size total-keys shift-interval)
+	lambda (i state)
+		define phase (quotient i shift-interval)
+		define base (* (modulo phase (quotient total-keys set-size)) set-size)
+		define key
+			if (< (random 100) 80)
+				+ base (random set-size)
+				random total-keys
+		{:key key :state state}
+
+;; Mixed recency/frequency: alternates between LRU-friendly and LFU-friendly phases
+;; This pattern should highlight ARC's adaptive capability
+define (make-mixed-gen phase-length total-keys freq-keys)
+	lambda (i state)
+		define phase (quotient i phase-length)
+		define in-freq-phase (= (modulo phase 2) 0)
+		define key
+			if in-freq-phase
+				;; Frequency phase: repeatedly access small set (LFU-friendly)
+				random freq-keys
+				;; Recency phase: sequential scan (LRU-friendly)
+				modulo i total-keys
+		{:key key :state state}
+
+;; ============================================================================
+;; Run All Benchmarks
+;; ============================================================================
+
+define algorithms
+	list
+		{:name "LRU" :make lru-make :get lru-get :put lru-put}
+		{:name "ARC" :make arc-make :get arc-get :put arc-put}
+		{:name "S3-FIFO" :make s3-make :get s3-get :put s3-put}
+		{:name "SIEVE" :make sieve-make :get sieve-get :put sieve-put}
+		{:name "SIEVE-2" :make sieve2-make :get sieve2-get :put sieve2-put}
+
+define (run-pattern-bench pattern-name cap ops key-gen)
+	displayln pattern-name
+	define (run-all algs results)
+		if (null? algs)
+			results
 			let
-				((key (pick-hotcold-key)))
-				define result (get-fn cache key)
-				define hit (hamt-ref result :hit)
-				define c2 (hamt-ref result :cache)
-				define c3 (if hit c2 (put-fn c2 key i))
-				loop (+ i 1) c3 (if hit (+ hits 1) hits)
-	define result (loop 0 (make-fn cap) 0)
-	define elapsed (- (current-inexact-milliseconds) start)
-	define hits (hamt-ref result :hits)
-	define hit-rate (* 100.0 (/ hits ops))
-	displayln (format "  Hit rate: ~a% (~a/~a)" (/ (round (* hit-rate 10)) 10.0) hits ops)
-	displayln (format "  Time: ~ams" (round elapsed))
+				((alg (car algs)))
+				define rate (run-bench (hamt-ref alg :name) (hamt-ref alg :make) (hamt-ref alg :get) (hamt-ref alg :put) cap ops key-gen)
+				run-all (cdr algs) (cons {:name (hamt-ref alg :name) :rate rate} results)
+	define results (reverse (run-all algorithms '()))
+	;; Find winner
+	define (find-best rs best)
+		if (null? rs)
+			best
+			let
+				((r (car rs)))
+				if (> (hamt-ref r :rate) (hamt-ref best :rate))
+					find-best (cdr rs) r
+					find-best (cdr rs) best
+	define winner (find-best (cdr results) (car results))
+	displayln (format "  Winner: ~a" (hamt-ref winner :name))
 	displayln ""
-	hit-rate
+	winner
 
-define arc-rate2 (run-hotcold "ARC" arc-make arc-get arc-put capacity2 ops2)
-define s3-rate2 (run-hotcold "S3-FIFO" s3-make s3-get s3-put capacity2 ops2)
+displayln "================================================================"
+displayln "Comprehensive Cache Benchmark"
+displayln "LRU vs ARC vs S3-FIFO vs SIEVE (1-bit) vs SIEVE-2 (2-bit)"
+displayln "================================================================"
+displayln ""
 
-displayln "Test 2 Results:"
-if (> s3-rate2 arc-rate2)
-	displayln (format "  S3-FIFO wins by ~a percentage points" (/ (round (* (- s3-rate2 arc-rate2) 10)) 10.0))
-	displayln (format "  ARC wins by ~a percentage points" (/ (round (* (- arc-rate2 s3-rate2) 10)) 10.0))
+;; Test 1: Temporal Locality
+define w1 (run-pattern-bench (format "Test 1: Temporal Locality (70% recent, capacity=100, ops=~a)" bench-ops) 100 bench-ops (make-temporal-gen 200))
 
+;; Test 2: Hot/Cold
+define w2 (run-pattern-bench (format "Test 2: Hot/Cold 80/20 (10 hot + 200 cold, capacity=50, ops=~a)" bench-ops) 50 bench-ops (make-hotcold-gen 10 200))
+
+;; Test 3: Sequential Scan
+define w3 (run-pattern-bench (format "Test 3: Scan Resistance (30% hot + 70% scan, capacity=100, ops=~a)" bench-ops) 100 bench-ops (make-scan-gen 20 500))
+
+;; Test 4: Zipf Distribution
+define w4 (run-pattern-bench (format "Test 4: Zipf Distribution (power law, capacity=100, ops=~a)" bench-ops) 100 bench-ops (make-zipf-gen 500))
+
+;; Test 5: Loop/Burst Pattern
+define w5 (run-pattern-bench (format "Test 5: Loop Pattern (60% loop of 50 + random, capacity=75, ops=~a)" bench-ops) 75 bench-ops (make-loop-gen 50 300))
+
+;; Test 6: Working Set Shift
+define w6 (run-pattern-bench (format "Test 6: Working Set Shift (set changes every 500 ops, capacity=50, ops=~a)" bench-ops) 50 bench-ops (make-shift-gen 30 300 500))
+
+;; Test 7: Mixed Recency/Frequency (ARC-friendly)
+define w7 (run-pattern-bench (format "Test 7: Mixed Recency/Frequency (alternating phases, capacity=100, ops=~a)" bench-ops) 100 bench-ops (make-mixed-gen 1000 500 30))
+
+;; Summary
+displayln "================================================================"
+displayln "Summary"
+displayln "================================================================"
+displayln (format "Test 1 (Temporal):    ~a" (hamt-ref w1 :name))
+displayln (format "Test 2 (Hot/Cold):    ~a" (hamt-ref w2 :name))
+displayln (format "Test 3 (Scan):        ~a" (hamt-ref w3 :name))
+displayln (format "Test 4 (Zipf):        ~a" (hamt-ref w4 :name))
+displayln (format "Test 5 (Loop):        ~a" (hamt-ref w5 :name))
+displayln (format "Test 6 (Shift):       ~a" (hamt-ref w6 :name))
+displayln (format "Test 7 (Mixed):       ~a" (hamt-ref w7 :name))
 displayln ""
 displayln "Benchmark complete!"

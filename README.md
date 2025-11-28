@@ -318,12 +318,50 @@ The examples include implementations of production cache algorithms using typed 
 **S3-FIFO (Simple, Scalable, FIFO-based)** - `examples/s3fifo-cache.trk`
 - From SOSP 2023: "FIFO Queues are All You Need for Cache Eviction"
 - Uses two FIFO queues (S=10%, M=90%) to filter one-hit-wonders
-- Often faster than ARC with comparable hit rates
+- Excellent scan resistance for sequential access patterns
 
-Run the benchmark to compare them:
+**SIEVE (1-bit)** - `examples/sieve-cache.trk`
+- From NSDI 2024: "SIEVE is Simpler than LRU"
+- Single FIFO queue with a scanning "hand" pointer
+- Each entry has a 1-bit visited flag; unvisited items evicted first
+- Key insight: retained items stay in place (unlike CLOCK which reinserts)
+
+**SIEVE-2 (2-bit)** - `examples/sieve2-cache.trk`
+- Variant using a 2-bit counter (0-3) instead of a boolean
+- On hit: increment counter (saturates at 3)
+- On hand pass: decrement counter; evict when 0
+- Gives frequently-accessed items more "staying power"
+
+#### Benchmark Results
+
+Run the comprehensive benchmark (default: 50,000 ops per test):
 ```bash
 racket tests/cache-bench.trk
+
+# Configure via environment variables:
+BENCH_OPS=100000 racket tests/cache-bench.trk           # More ops for statistical confidence
+BENCH_SEED=42 racket tests/cache-bench.trk              # Reproducible random seed
+BENCH_OPS=10000 BENCH_SEED=42 racket tests/cache-bench.trk  # Both
 ```
+
+| Test Pattern | LRU | ARC | S3-FIFO | SIEVE | SIEVE-2 |
+|--------------|-----|-----|---------|-------|---------|
+| Temporal Locality | 85.1% | **85.1%** | 84.8% | 81.6% | 78.3% |
+| Hot/Cold (80/20) | 83.9% | 84.0% | **84.0%** | 84.0% | 84.0% |
+| Scan Resistance | 25.3% | 29.5% | 29.8% | **30.0%** | 29.9% |
+| Zipf Distribution | 31.7% | 34.5% | 37.7% | 39.8% | **41.8%** |
+| Loop/Burst | 56.0% | 66.2% | 69.5% | 69.9% | **70.0%** |
+| Working Set Shift | 75.4% | **75.4%** | 71.2% | 63.4% | 58.1% |
+| Mixed Recency/Freq | 50.0% | **53.0%** | 53.0% | 53.0% | 53.0% |
+
+**Takeaways:**
+- **SIEVE/SIEVE-2** excel at Zipf (power-law) patterns - common in real workloads
+- **ARC** wins on mixed workloads that alternate between recency and frequency patterns
+- **S3-FIFO** strong on hot/cold and loop patterns thanks to ghost queue filtering one-hit-wonders
+- **LRU** strong baseline for pure temporal locality patterns
+- Results vary with random seed - run multiple times for statistical confidence
+- Real-world traces: SIEVE ~6% better than LRU ([NSDI'24](https://www.usenix.org/conference/nsdi24/presentation/zhang-yazhuo)), S3-FIFO lowest miss ratio on 10/14 datasets ([SOSP'23](https://dl.acm.org/doi/10.1145/3600006.3613147))
+- ARC algorithm per [Megiddo & Modha, FAST 2003](https://www.usenix.org/conference/fast-03/arc-self-tuning-low-overhead-replacement-cache)
 
 ## Running Tests
 
@@ -362,7 +400,9 @@ raco test tests/
 │   ├── word-freq.trk       # Word frequency counter
 │   ├── counter-typed.trk   # Word counter with types
 │   ├── arc-cache.trk       # ARC cache algorithm (typed)
-│   └── s3fifo-cache.trk    # S3-FIFO cache algorithm (typed)
+│   ├── s3fifo-cache.trk    # S3-FIFO cache algorithm (typed)
+│   ├── sieve-cache.trk     # SIEVE 1-bit cache (typed)
+│   └── sieve2-cache.trk    # SIEVE 2-bit cache (typed)
 ├── tests/
 │   ├── tab-racket-test.rkt  # Parser test suite
 │   ├── hamt-test.rkt        # HAMT test suite
@@ -370,7 +410,7 @@ raco test tests/
 │   ├── hash-api-test.trk    # HAMT API demo (tab-racket)
 │   ├── pvector-api-test.trk # PVector API demo (tab-racket)
 │   ├── examples-test.rkt    # Integration tests for examples
-│   └── cache-bench.trk      # ARC vs S3-FIFO benchmark
+│   └── cache-bench.trk      # Comprehensive cache algorithm benchmark
 ├── flake.nix             # Nix flake configuration
 ├── docs/
 │   └── PROJECT_PLAN.md   # Project planning document

@@ -283,7 +283,10 @@
 
 (module+ test
 		(require rackunit/text-ui)
-		(random-seed 42) ; Make tests reproducible
+		;; Generate and emit seed for reproducibility
+		(define seed (modulo (current-milliseconds) (expt 2 31)))
+		(random-seed seed)
+		(displayln (format "Random seed: ~a (use (random-seed ~a) to reproduce)" seed seed))
 		(run-tests hamt-property-tests)
 		(run-tests pvector-property-tests)
 		(run-tests structural-sharing-tests))

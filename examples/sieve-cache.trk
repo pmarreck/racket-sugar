@@ -1,0 +1,244 @@
+#lang tab-racket/typed
+
+;; SIEVE Cache Implementation (1-bit metadata) - Typed Variant
+;; A simple, efficient cache eviction algorithm simpler than LRU
+;;
+;; SIEVE uses:
+;;   - A single FIFO queue
+;;   - A "hand" pointer for eviction scanning
+;;   - 1-bit "visited" flag per entry
+;;
+;; Paper: "SIEVE is Simpler than LRU" (NSDI 2024)
+;; Key insight: Keep retained objects in place (unlike CLOCK which reinserts)
+
+;; ============================================================================
+;; Type-safe helpers
+;; ============================================================================
+
+: get-int (-> Any Integer Integer)
+define (get-int val default)
+	if (exact-integer? val)
+		cast val Integer
+		default
+
+;; ============================================================================
+;; Helper Functions
+;; ============================================================================
+
+;; Remove element at index from vector, return (values new-vec removed-elem)
+: vec-remove-at (-> Any Integer Any)
+define (vec-remove-at v idx)
+	define len (pvector-length v)
+	: loop (-> Integer Any Any)
+	define (loop i acc)
+		if (>= i len)
+			acc
+			if (= i idx)
+				loop (+ i 1) acc
+				loop (+ i 1) (pvector-push acc (pvector-ref v i))
+	loop 0 []
+
+;; Get index of element in vector, or -1 if not found
+: vec-index-of (-> Any Any Integer)
+define (vec-index-of v elem)
+	define len (pvector-length v)
+	: loop (-> Integer Integer)
+	define (loop i)
+		cond
+			(>= i len) -1
+			(equal? (pvector-ref v i) elem) i
+			else
+				loop (+ i 1)
+	loop 0
+
+;; Check if element is in vector
+: vec-contains? (-> Any Any Boolean)
+define (vec-contains? v elem)
+	>= (vec-index-of v elem) 0
+
+;; ============================================================================
+;; SIEVE Core Operations (1-bit)
+;; ============================================================================
+
+;; Create an empty SIEVE cache
+;; Structure: {:cache data-map :queue fifo-vec :visited visited-map :hand index :capacity n}
+: make-sieve (-> Integer Any)
+define (make-sieve capacity)
+	{:cache {} :queue [] :visited {} :hand 0 :capacity capacity}
+
+;; Get cache size
+: sieve-size (-> Any Integer)
+define (sieve-size cache)
+	pvector-length (hamt-ref cache :queue)
+
+;; Check if cache is full
+: sieve-full? (-> Any Boolean)
+define (sieve-full? cache)
+	>= (sieve-size cache) (get-int (hamt-ref cache :capacity) 0)
+
+;; Set visited bit for a key
+: set-visited (-> Any Any Any)
+define (set-visited cache key)
+	hamt-set cache :visited (hamt-set (hamt-ref cache :visited) key #t)
+
+;; Clear visited bit for a key
+: clear-visited (-> Any Any Any)
+define (clear-visited cache key)
+	hamt-set cache :visited (hamt-set (hamt-ref cache :visited) key #f)
+
+;; Check if key has been visited
+: is-visited? (-> Any Any Boolean)
+define (is-visited? cache key)
+	define visited-map (hamt-ref cache :visited)
+	if (hamt-contains? visited-map key)
+		if (hamt-ref visited-map key) #t #f
+		#f
+
+;; Evict one item using SIEVE algorithm
+;; Queue: index 0 = head (newest), last index = tail (oldest)
+;; Hand starts at tail and moves toward head
+;; If visited: clear bit, move hand toward head, keep item in place
+;; If not visited: evict item
+: sieve-evict (-> Any Any)
+define (sieve-evict cache)
+	define queue (hamt-ref cache :queue)
+	define len (pvector-length queue)
+	if (= len 0)
+		cache
+		let
+			((raw-hand (get-int (hamt-ref cache :hand) (- len 1))))
+			;; Ensure hand is in valid range, default to tail
+			define hand (if (>= raw-hand len) (- len 1) (if (< raw-hand 0) (- len 1) raw-hand))
+			: scan (-> Any Integer Integer Any)
+			define (scan c h iterations)
+				if (>= iterations len)
+					;; Fallback: evict at current hand position
+					let
+						((victim (pvector-ref (hamt-ref c :queue) h)))
+						define new-queue (vec-remove-at (hamt-ref c :queue) h)
+						define new-cache-data (hamt-remove (hamt-ref c :cache) victim)
+						define new-visited (hamt-remove (hamt-ref c :visited) victim)
+						define new-len (pvector-length new-queue)
+						;; After eviction, hand moves toward head (decrement)
+						define new-hand (if (> h 0) (- h 1) (max 0 (- new-len 1)))
+						hamt-set (hamt-set (hamt-set (hamt-set c :queue new-queue) :cache new-cache-data) :visited new-visited) :hand new-hand
+					let
+						((key (pvector-ref (hamt-ref c :queue) h)))
+						if (is-visited? c key)
+							let
+								((c2 (clear-visited c key)))
+								;; Move hand toward head (decrement index), wrap to tail if at head
+								define cur-len (pvector-length (hamt-ref c2 :queue))
+								define next-h (if (> h 0) (- h 1) (- cur-len 1))
+								scan c2 next-h (+ iterations 1)
+							;; Not visited - evict this item
+							let
+								((victim key))
+								define new-queue (vec-remove-at (hamt-ref c :queue) h)
+								define new-cache-data (hamt-remove (hamt-ref c :cache) victim)
+								define new-visited (hamt-remove (hamt-ref c :visited) victim)
+								define new-len (pvector-length new-queue)
+								;; After eviction, hand moves toward head (decrement)
+								define new-hand (if (> h 0) (- h 1) (max 0 (- new-len 1)))
+								hamt-set (hamt-set (hamt-set (hamt-set c :queue new-queue) :cache new-cache-data) :visited new-visited) :hand new-hand
+			scan cache hand 0
+
+;; ============================================================================
+;; Main API
+;; ============================================================================
+
+;; Get value from cache
+;; On hit: set visited bit
+: sieve-get (-> Any Any Any)
+define (sieve-get cache key)
+	define cache-data (hamt-ref cache :cache)
+	if (hamt-contains? cache-data key)
+		let
+			((value (hamt-ref cache-data key)))
+			define new-cache (set-visited cache key)
+			{:found #t :value value :cache new-cache}
+		{:found #f :value #f :cache cache}
+
+;; Put value into cache
+;; New items inserted at head (index 0) with visited=false
+: sieve-put (-> Any Any Any Any)
+define (sieve-put cache key value)
+	define cache-data (hamt-ref cache :cache)
+	define queue (hamt-ref cache :queue)
+	;; If key already exists, update value and set visited
+	if (vec-contains? queue key)
+		let
+			((new-cache-data (hamt-set cache-data key value)))
+			define cache1 (hamt-set cache :cache new-cache-data)
+			set-visited cache1 key
+		;; New key - may need to evict
+		let
+			((cache1 (if (sieve-full? cache) (sieve-evict cache) cache)))
+			;; Insert at head (prepend to queue)
+			define old-queue (hamt-ref cache1 :queue)
+			define new-queue (pvector-push [] key)
+			define len (pvector-length old-queue)
+			: build-queue (-> Integer Any Any)
+			define (build-queue i acc)
+				if (>= i len)
+					acc
+					build-queue (+ i 1) (pvector-push acc (pvector-ref old-queue i))
+			define final-queue (build-queue 0 new-queue)
+			define new-cache-data (hamt-set (hamt-ref cache1 :cache) key value)
+			define new-visited (hamt-set (hamt-ref cache1 :visited) key #f)
+			;; Hand position: increment since we inserted at head, shifting all indices
+			;; But also ensure hand doesn't exceed new length (points to tail initially)
+			define old-hand (get-int (hamt-ref cache1 :hand) 0)
+			define new-len (pvector-length final-queue)
+			define new-hand (min (+ old-hand 1) (- new-len 1))
+			hamt-set (hamt-set (hamt-set (hamt-set cache1 :queue final-queue) :cache new-cache-data) :visited new-visited) :hand new-hand
+
+;; ============================================================================
+;; Demo
+;; ============================================================================
+
+displayln "SIEVE Cache Demo (1-bit, Typed)"
+displayln "================================"
+displayln ""
+
+define cache (make-sieve 5)
+displayln "Created SIEVE cache with capacity 5"
+
+displayln ""
+displayln "Inserting :a, :b, :c..."
+define c1 (sieve-put cache :a 1)
+define c2 (sieve-put c1 :b 2)
+define c3 (sieve-put c2 :c 3)
+displayln (format "  Cache size: ~a" (sieve-size c3))
+
+displayln ""
+displayln "Accessing :a and :c (setting visited bits)..."
+define r1 (sieve-get c3 :a)
+define c4 (hamt-ref r1 :cache)
+define r2 (sieve-get c4 :c)
+define c5 (hamt-ref r2 :cache)
+displayln (format "  :a visited: ~a" (is-visited? c5 :a))
+displayln (format "  :b visited: ~a" (is-visited? c5 :b))
+displayln (format "  :c visited: ~a" (is-visited? c5 :c))
+
+displayln ""
+displayln "Inserting :d, :e (filling cache)..."
+define c6 (sieve-put c5 :d 4)
+define c7 (sieve-put c6 :e 5)
+displayln (format "  Cache size: ~a" (sieve-size c7))
+
+displayln ""
+displayln "Inserting :f (triggers eviction)..."
+define c8 (sieve-put c7 :f 6)
+displayln (format "  Cache size after eviction: ~a" (sieve-size c8))
+
+;; Check what was evicted - :b should be gone (never visited)
+define rb (sieve-get c8 :b)
+define ra (sieve-get c8 :a)
+displayln (format "  :b still in cache (never visited): ~a" (hamt-ref rb :found))
+displayln (format "  :a still in cache (was visited): ~a" (hamt-ref ra :found))
+
+displayln ""
+displayln "SIEVE evicts unvisited items first, keeping popular items in place."
+displayln ""
+displayln "Demo complete!"
