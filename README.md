@@ -245,21 +245,21 @@ Long lines can be continued using `\` at the end of a line. All leading whitespa
 ```
 #lang tab-racket
 
-;; Long function calls - align args visually
+;; Align args visually with spaces
 define result (some-long-function-name "first-arg" \
                                        "second-arg" \
                                        "third-arg")
+
+;; Multiple continuations chain together
+define message (string-append "This is a very " \
+                              "long string that " \
+                              "spans multiple lines")
 
 ;; Works in function bodies too
 define (process-data data)
 	transform data \
 	          filter-valid \
 	          aggregate
-
-;; Or just continue with no alignment
-define message (string-append "This is a very " \
-"long string that " \
-"spans multiple lines")
 ```
 
 **Rules:**
