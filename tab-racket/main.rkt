@@ -284,24 +284,20 @@
 
 ;; Read a possibly multi-line logical line (handling \ continuation)
 ;; Returns: (values complete-line-string line-number lines-consumed)
+;; Continuation lines have ALL leading whitespace stripped (for visual alignment flexibility)
 (define (read-continued-line port start-line-num)
 	(let ([raw (read-line port)])
 		(if (eof-object? raw)
 				(values #f start-line-num 0)
 				(if (line-continues? raw)
 						;; Line continues - read next and join
-						(let ([base-indent (count-indent raw start-line-num)])
-							(let-values ([(next-raw next-line-num lines-consumed)
-														(read-continued-line port (add1 start-line-num))])
-								(if (not next-raw)
-										(error (format "Line ~a: Line continuation at end of file" start-line-num))
-										(let ([next-indent (count-indent next-raw next-line-num)])
-											(if (not (= base-indent next-indent))
-													(error (format "Line ~a: Continuation line must have same indentation (expected ~a tabs, got ~a)"
-																				 next-line-num base-indent next-indent))
-													;; Join lines: strip \ from first, concatenate with space
-													(let ([joined (string-append (strip-continuation raw) " " (string-trim next-raw #:right? #f))])
-														(values joined start-line-num (add1 lines-consumed))))))))
+						(let-values ([(next-raw next-line-num lines-consumed)
+													(read-continued-line port (add1 start-line-num))])
+							(if (not next-raw)
+									(error (format "Line ~a: Line continuation at end of file" start-line-num))
+									;; Join lines: strip \ from first, strip ALL leading whitespace from next, join with space
+									(let ([joined (string-append (strip-continuation raw) " " (string-trim next-raw #:right? #f))])
+										(values joined start-line-num (add1 lines-consumed)))))
 						;; No continuation
 						(values raw start-line-num 1)))))
 

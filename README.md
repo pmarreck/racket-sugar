@@ -240,31 +240,31 @@ Note: The `~` prefix is only special when followed by an identifier. The tilde c
 
 ### Line Continuation (`\`)
 
-Long lines can be continued using `\` at the end of a line. The continuation line **must have the same indentation level** as the original line:
+Long lines can be continued using `\` at the end of a line. All leading whitespace on continuation lines is stripped, allowing flexible visual alignment:
 
 ```
 #lang tab-racket
 
-;; Long function calls can span multiple lines
+;; Long function calls - align args visually
 define result (some-long-function-name "first-arg" \
-               "second-arg" \
-               "third-arg")
+                                       "second-arg" \
+                                       "third-arg")
 
 ;; Works in function bodies too
 define (process-data data)
 	transform data \
-	filter-valid \
-	aggregate
+	          filter-valid \
+	          aggregate
 
-;; Multiple continuations chain together
+;; Or just continue with no alignment
 define message (string-append "This is a very " \
-                "long string that " \
-                "spans multiple lines")
+"long string that " \
+"spans multiple lines")
 ```
 
 **Rules:**
 - `\` must be the last non-whitespace character on the line
-- Continuation line must have identical tab indentation (or error)
+- All leading whitespace (tabs/spaces) on continuation lines is stripped
 - `\` at EOF is an error (nothing to continue to)
 - `\` inside strings (like `"\n"`) is not treated as continuation
 

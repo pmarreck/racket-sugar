@@ -491,12 +491,19 @@
 					(let ([result (parse-string "list \"hello\" \\\n\"world\"")])
 							(check-equal? (car result) '(list "hello" "world"))))
 
-			(test-case "Line continuation with wrong indentation errors"
+			(test-case "Line continuation strips leading whitespace from continuation"
 					;; + 1 \
-					;;     2   <- wrong indent (extra tab)
-					;; Should error
-					(check-exn exn:fail?
-							(lambda () (parse-string "+ 1 \\\n\t2"))))
+					;;     2   <- any indentation is fine, gets stripped
+					;; Should work - continuation line whitespace is stripped
+					(let ([result (parse-string "+ 1 \\\n\t2")])
+							(check-equal? (car result) '(+ 1 2))))
+
+			(test-case "Line continuation allows visual alignment with spaces"
+					;; func "arg1" \
+					;;      "arg2"   <- spaces for alignment
+					;; Should work - all leading whitespace stripped
+					(let ([result (parse-string "list \"arg1\" \\\n     \"arg2\"")])
+							(check-equal? (car result) '(list "arg1" "arg2"))))
 
 			(test-case "Line continuation at nested indent level"
 					;; define (foo)
