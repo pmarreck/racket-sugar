@@ -1,0 +1,32 @@
+#lang racket-sugar/typed
+
+;; Typed (racket-sugar/typed) immutable-list quicksort. Annotations use the racket-sugar
+;; surface (: + ~->). The partition predicate is a typed lambda with PAREN-grouped params
+;; -- (lambda ((e : Integer)) ...) -- which Typed Racket accepts natively (Racket treats
+;; () and [] as the same datum), so no `ann` and no [x : T] brackets are needed.
+
+: quicksort ((Listof Integer) ~-> (Listof Integer))
+define (quicksort lst)
+	if (null? lst)
+		'()
+		let ((x (car lst)))
+			let-values (((lt gte) (partition (lambda ((e : Integer)) (< e x)) (cdr lst))))
+				append (quicksort lt) (list x) (quicksort gte)
+
+: make-data (Integer Integer ~-> (Listof Integer))
+define (make-data n seed)
+	let loop ((i : Integer 0) (x : Integer seed) (acc : (Listof Integer) '()))
+		if (>= i n)
+			acc
+			let ((nx (modulo (* 48271 x) 2147483647)))
+				loop (+ i 1) nx (cons nx acc)
+
+: checksum ((Listof Integer) ~-> Integer)
+define (checksum lst)
+	let loop ((i : Integer 1) (l : (Listof Integer) lst) (acc : Integer 0))
+		if (null? l)
+			acc
+			loop (+ i 1) (cdr l) (modulo (+ acc (* i (car l))) 1000000007)
+
+define n (assert (string->number (vector-ref (current-command-line-arguments) 0)) exact-integer?)
+displayln (checksum (quicksort (make-data n 42)))

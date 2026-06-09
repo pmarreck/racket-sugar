@@ -40,6 +40,25 @@ opts a block out (illustrative examples with placeholder identifiers).
       - typed example failed type-check — rewrote to inference form + value checks.
 - [x] Converted infix section `; → ..= N` comments → checkable `; => N`. All green.
 
+## Done (2026-06-09 EST) — typed benchmark variants + standard sort + reader fix
+- [x] Added racket built-in `sort` + Elixir `Enum.sort` benchmarks: built-in merge sort
+      (~immutable) ≈ mutable quicksort speed, ~2x faster than immutable quicksort.
+      Algorithm mismatch, not immutability, was the "tax".
+- [x] Added TYPED variants of all 3 racket benchmarks. Finding: typed is ~25-35% SLOWER
+      (Integer = arbitrary precision -> TR can't specialize; Fixnum would be needed).
+- [x] Resolved the `ann` ugliness: typed lambda params via PAREN groups
+      `(lambda ((e : Integer)) ...)` — TR accepts them natively since ()≡[] in Racket.
+      No ann, no [x:T] brackets, no [] reallocation needed.
+- [x] FIXED reader bug (TDD, tests/typed-reader-test.rkt): `~->` now transforms in EVERY
+      position (inline ann/cast types), not only in `: name type` annotations. Applied
+      transform-type-arrow globally in racket-sugar/typed read/read-syntax.
+- [x] Benchmark README + runner now cover all 9 implementations (cross-checked).
+
+## TODO next
+- [ ] Investigate comment-char: alias `# ` (hash-space) as a comment alongside `;`
+      (aliasing, not replacement — `;` stays; `#`+non-space stays reader syntax).
+- [ ] (optional) Fixnum-typed variant to test whether TR's optimizer beats untyped.
+
 ## Real finding (surfaced by doctest) — needs decision
 - [ ] `racket-sugar/typed`: an explicit value annotation on an imported parametric type
       (`: my-map HAMT` before `define my-map (hamt "key" 42)`) fails type-check — the

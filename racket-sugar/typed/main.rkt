@@ -235,24 +235,9 @@
 		 (map transform-type-arrow v)]
 		[else v]))
 
-;; Transform a top-level expression, applying type-arrow transform to type annotations
-;; Detects (: name type-expr) pattern and transforms type-expr specially
-(define (transform-with-type-awareness v)
-	(cond
-		[(and (pair? v)
-					(>= (length v) 3)
-					(eq? (car v) ':))
-		 ;; This is a type annotation (: name type-expr)
-		 ;; Apply type-arrow transform to the type expression (third element)
-		 (let ([colon (car v)]
-					 [name (cadr v)]
-					 [type-expr (transform-type-arrow (caddr v))]
-					 [rest (cdddr v)])  ; Any additional elements (shouldn't be any)
-			 (cons colon (cons name (cons type-expr rest))))]
-		[(pair? v)
-		 ;; Not a type annotation at top level, recurse but keep looking
-		 (map transform-with-type-awareness v)]
-		[else v]))
+;; NOTE: transform-type-arrow is applied GLOBALLY in read/read-syntax below, so ~->
+;; rewrites to -> in every position — `:` annotations AND inline expression types such
+;; as those in `ann`/`cast`/`inst`. (It previously only fired inside `(: name type)`.)
 
 ;; Helper: Auto-quote keywords (symbols starting with :) to make them self-evaluating
 ;; This mimics Clojure/Ruby/Elixir behavior where :foo evaluates to itself
@@ -339,7 +324,7 @@
 				 [parsed (parse-block lines 0)]
 				 ;; Apply type-aware transform first (handles ~-> in type annotations)
 				 ;; Then apply general infix transform (handles ~+ etc in code)
-				 [type-transformed (map transform-with-type-awareness parsed)]
+				 [type-transformed (map transform-type-arrow parsed)]
 				 [fully-transformed (map transform-infix type-transformed)])
 		fully-transformed))
 
@@ -348,7 +333,7 @@
 				 [parsed (parse-block lines 0)]
 				 ;; Apply type-aware transform first (handles ~-> in type annotations)
 				 ;; Then apply general infix transform (handles ~+ etc in code)
-				 [type-transformed (map transform-with-type-awareness parsed)]
+				 [type-transformed (map transform-type-arrow parsed)]
 				 [body (map transform-infix type-transformed)])
 		;; Wrap in typed/racket module with require/typed for persistent structures
 		(datum->syntax #f

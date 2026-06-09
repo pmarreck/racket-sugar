@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Reproducible quicksort benchmark across implementations:
-#   - Zig (in-place array, native ReleaseFast)
-#   - racket-sugar mutable vector (in-place)
-#   - racket-sugar immutable list (functional, allocating)
-#   - Elixir immutable list (functional) -- skipped if `elixir` is absent
+# Reproducible quicksort benchmark across implementations & paradigms:
+#   Zig (native in-place) | racket-sugar {mutable vector, immutable list, built-in sort}
+#   in both untyped and typed dialects | Elixir {list quicksort, built-in Enum.sort}.
+# Elixir entries are skipped if `elixir` is absent.
 # Usage: ./benchmarks/quicksort/bench [N]   (default N=1000000)
 set -u
 cd "$(dirname "$0")/../.."          # repo root
@@ -13,36 +12,41 @@ exec nix develop --command bash -c '
 	set -u
 	export PLTCOLLECTS="$PWD:"
 	N='"$N"'
+	B=benchmarks/quicksort
 
-	# Build/precompile so we time execution, not builds.
-	zig build-exe benchmarks/quicksort/quicksort.zig -O ReleaseFast \
-		-femit-bin=benchmarks/quicksort/quicksort_zig
-	raco make benchmarks/quicksort/quicksort.trk benchmarks/quicksort/quicksort-mutable.trk >/dev/null
+	zig build-exe $B/quicksort.zig -O ReleaseFast -femit-bin=$B/quicksort_zig
+	raco make $B/quicksort.trk $B/quicksort-mutable.trk $B/stdsort.trk \
+		$B/quicksort-typed.trk $B/quicksort-mutable-typed.trk $B/stdsort-typed.trk >/dev/null
 
-	# Correctness cross-check: every implementation must agree on the checksum.
-	ref=$(./benchmarks/quicksort/quicksort_zig "$N")
+	ref=$($B/quicksort_zig "$N")
 	for cmd in \
-		"racket benchmarks/quicksort/quicksort.trk" \
-		"racket benchmarks/quicksort/quicksort-mutable.trk"; do
+		"racket $B/quicksort.trk" "racket $B/quicksort-mutable.trk" "racket $B/stdsort.trk" \
+		"racket $B/quicksort-typed.trk" "racket $B/quicksort-mutable-typed.trk" "racket $B/stdsort-typed.trk"; do
 		got=$($cmd "$N")
 		[ "$got" = "$ref" ] || { echo "CHECKSUM MISMATCH: $cmd -> $got (want $ref)"; exit 1; }
 	done
 	have_elixir=0
 	if command -v elixir >/dev/null 2>&1; then
-		got=$(elixir benchmarks/quicksort/quicksort.exs "$N")
-		[ "$got" = "$ref" ] || { echo "CHECKSUM MISMATCH: elixir -> $got (want $ref)"; exit 1; }
+		for cmd in "elixir $B/quicksort.exs" "elixir $B/stdsort.exs"; do
+			got=$($cmd "$N"); [ "$got" = "$ref" ] || { echo "CHECKSUM MISMATCH: $cmd"; exit 1; }
+		done
 		have_elixir=1
 	fi
 	echo "checksum=$ref (all implementations agree)"
 
 	args=(--warmup 3 -N
-		--command-name "Zig (in-place array, native)"  "./benchmarks/quicksort/quicksort_zig $N"
-		--command-name "racket-sugar (mutable vector)" "racket benchmarks/quicksort/quicksort-mutable.trk $N"
-		--command-name "racket-sugar (immutable list)" "racket benchmarks/quicksort/quicksort.trk $N")
+		--command-name "Zig (in-place array)"                "$B/quicksort_zig $N"
+		--command-name "racket mutable vector (untyped)"     "racket $B/quicksort-mutable.trk $N"
+		--command-name "racket mutable vector (typed)"       "racket $B/quicksort-mutable-typed.trk $N"
+		--command-name "racket built-in sort (untyped)"      "racket $B/stdsort.trk $N"
+		--command-name "racket built-in sort (typed)"        "racket $B/stdsort-typed.trk $N"
+		--command-name "racket immutable list qs (untyped)"  "racket $B/quicksort.trk $N"
+		--command-name "racket immutable list qs (typed)"    "racket $B/quicksort-typed.trk $N")
 	if [ "$have_elixir" = 1 ]; then
-		args+=(--command-name "Elixir (immutable list)" "elixir benchmarks/quicksort/quicksort.exs $N")
+		args+=(--command-name "Elixir built-in Enum.sort" "elixir $B/stdsort.exs $N"
+		       --command-name "Elixir immutable list qs"  "elixir $B/quicksort.exs $N")
 	else
-		echo "(elixir not found -- skipping Elixir benchmark)"
+		echo "(elixir not found -- skipping Elixir benchmarks)"
 	fi
 	hyperfine "${args[@]}"
 '

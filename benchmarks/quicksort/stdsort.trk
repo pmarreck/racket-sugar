@@ -1,0 +1,22 @@
+#lang racket-sugar
+
+;; Racket's BUILT-IN `sort` (a stable merge sort) over the same MINSTD data. Merge sort
+;; is naturally functional/immutable-friendly, unlike quicksort — this is what you'd
+;; actually use, and it shows the "immutability tax" on quicksort is an algorithm problem,
+;; not an immutability problem.
+
+define (make-data n seed)
+	let loop ((i 0) (x seed) (acc '()))
+		if (>= i n)
+			acc
+			let ((nx (modulo (* 48271 x) 2147483647)))
+				loop (+ i 1) nx (cons nx acc)
+
+define (checksum lst)
+	let loop ((i 1) (l lst) (acc 0))
+		if (null? l)
+			acc
+			loop (+ i 1) (cdr l) (modulo (+ acc (* i (car l))) 1000000007)
+
+define n (string->number (vector-ref (current-command-line-arguments) 0))
+displayln (checksum (sort (make-data n 42) <))
