@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Reproducible quicksort benchmark: racket-sugar (functional list) vs Zig (in-place).
+# Usage: ./benchmarks/quicksort/bench [N]   (default N=1000000)
+set -u
+cd "$(dirname "$0")/../.."          # repo root
+N="${1:-1000000}"
+
+exec nix develop --command bash -c '
+	set -u
+	export PLTCOLLECTS="$PWD:"
+	N='"$N"'
+	# build Zig (ReleaseFast) and precompile the .trk so we time execution, not builds
+	zig build-exe benchmarks/quicksort/quicksort.zig -O ReleaseFast \
+		-femit-bin=benchmarks/quicksort/quicksort_zig
+	raco make benchmarks/quicksort/quicksort.trk >/dev/null
+
+	# correctness cross-check: identical order-dependent checksum
+	rk=$(racket benchmarks/quicksort/quicksort.trk "$N")
+	zg=$(./benchmarks/quicksort/quicksort_zig "$N")
+	echo "checksum  racket-sugar=$rk  zig=$zg  match=$([ "$rk" = "$zg" ] && echo YES || echo NO)"
+	[ "$rk" = "$zg" ] || { echo "CHECKSUM MISMATCH"; exit 1; }
+
+	hyperfine --warmup 3 -N \
+		--command-name "racket-sugar (n=$N)" "racket benchmarks/quicksort/quicksort.trk $N" \
+		--command-name "zig ReleaseFast (n=$N)" "./benchmarks/quicksort/quicksort_zig $N"
+'

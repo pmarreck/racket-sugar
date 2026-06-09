@@ -23,3 +23,7 @@ CLAUDE*.md
 
 # doctest temp run-files (should be auto-deleted; ignore stragglers)
 .doctest-tmp-*.trk
+
+# compiled benchmark binaries
+benchmarks/**/quicksort_zig
+*.o

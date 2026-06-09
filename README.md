@@ -572,6 +572,36 @@ At 100K elements, persistent operations are ~1.5-2x slower than mutable equivale
 - Persistent vectors use 32-way branching (max ~1 billion elements efficiently)
 - Use `.trk` extension for racket-sugar files to distinguish from standard `.rkt` files
 
+## Why Racket?
+
+`racket-sugar` is itself the strongest argument for Racket. It replaces the most
+fundamental piece of Lisp surface syntax — the parentheses — with significant
+tab-based indentation, **adds** infix operators, self-evaluating keywords,
+persistent/immutable data structures (HAMTs + persistent vectors with structural
+sharing), and a fully typed variant... and it *still* lives inside, and fully
+interoperates with, the ordinary Racket ecosystem. No fork, no separate toolchain.
+
+That is possible because Racket is a **language-oriented programming** platform —
+built from the ground up to host new languages, not just programs:
+
+- **`#lang` + a programmable reader/expander.** A new surface syntax is just a reader
+  that emits s-expressions plus a module language. `racket-sugar`'s reader is ~330
+  lines, and from it you get a real language with DrRacket support and stack traces.
+- **Everything is reused.** A `#lang racket-sugar` module expands to ordinary `racket`,
+  so the entire standard library, `raco`, `rackunit`, the package system, and Scribble
+  docs work unchanged. The persistent structures here are normal Racket libraries; the
+  typed examples are ordinary **Typed Racket**.
+- **Hygienic macros + gradual typing.** Syntactic abstraction without accidental
+  capture, and opt-in static types (`#lang racket-sugar/typed`) over the same code.
+- **A genuinely fast runtime.** On the Chez-based Racket CS backend, a fully immutable,
+  list-based, functional quicksort runs within ~6–7× of hand-written in-place Zig —
+  see [`benchmarks/quicksort/`](benchmarks/quicksort/).
+- **Mature tooling.** DrRacket, `raco` (build/test/pkg/make), Scribble, a large package
+  ecosystem, and decades of stability.
+
+In most ecosystems, changing the syntax this drastically *and* adding new core data
+types *and* bolting on a type system would each mean building a new language from
+scratch. In Racket, it is a library you load next to everything else.
 ## License
 
 MIT

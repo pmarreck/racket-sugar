@@ -51,9 +51,14 @@ opts a block out (illustrative examples with placeholder identifiers).
 - [ ] Add sugar to change the comment char from `;` to `//` (or `#`, but `#` collides
       with `#lang`/`#rx`/`#t`). Peter: "what the hell were they thinking?" re Lisp `;`.
 
+## Done (2026-06-09 EST) — racket-sugar vs Zig benchmark + "Why Racket?"
+- [x] Rosetta-Code quicksort in both langs: benchmarks/quicksort/{quicksort.trk,
+      quicksort.zig}, identical MINSTD input + order-dependent checksum cross-check.
+      Results: zig 8.6x faster (n=1M) / 7.9x (n=3M) total; ~6-7x sort-only. ./bench runner.
+- [x] Added "Why Racket?" section to README (language-oriented programming pitch,
+      cites the benchmark + the fact racket-sugar exists in-ecosystem).
+
 ## Open / optional
-- [ ] Peter's extra ask: benchmark racket-sugar vs zig for an example algorithm
-      (e.g. fibonacci) with hyperfine. Not yet done — awaiting go-ahead / which algorithm.
 - [ ] flake `packages.default` has a pre-existing bug (`cp -r src` but there is no `src/`);
       unrelated to dev workflow. Fix if a buildable package output is wanted.
 - [ ] racket pinned to 8.14 (cached) not latest 8.18 (uncached on darwin). Revisit if an

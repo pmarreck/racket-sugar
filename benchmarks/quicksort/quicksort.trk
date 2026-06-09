@@ -1,0 +1,30 @@
+#lang racket-sugar
+
+;; Quicksort, ported from the Rosetta Code Racket entry (partition-based,
+;; functional/list, allocating). Comparator fixed to < for the benchmark.
+define (quicksort lst)
+	if (null? lst)
+		'()
+		let ((x (car lst)))
+			let-values (((lt gte) (partition (lambda (e) (< e x)) (cdr lst))))
+				append (quicksort lt) (list x) (quicksort gte)
+
+;; MINSTD LCG (x = 48271*x mod 2147483647) so Racket and Zig sort identical data.
+define (make-data n seed)
+	let loop ((i 0) (x seed) (acc '()))
+		if (>= i n)
+			acc
+			let ((nx (modulo (* 48271 x) 2147483647)))
+				loop (+ i 1) nx (cons nx acc)
+
+;; Order-dependent checksum (mod 1e9+7): cross-language correctness cross-check.
+define (checksum lst)
+	let loop ((i 1) (l lst) (acc 0))
+		if (null? l)
+			acc
+			loop (+ i 1) (cdr l) (modulo (+ acc (* i (car l))) 1000000007)
+
+define cli (current-command-line-arguments)
+define n (string->number (vector-ref cli 0))
+define sorted (quicksort (make-data n 42))
+displayln (checksum sorted)
