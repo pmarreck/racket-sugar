@@ -18,3 +18,5 @@ compiled/
 # Nix/direnv
 .direnv/
 perf-log.tsv
+AGENTS*.md
+CLAUDE*.md

@@ -1,1 +1,1 @@
-AGENTS.md
+/Users/pmarreck/Documents-CloudManaged/Obsidian Vaults/Peter Marreck/AGENTS_concise.md.md
