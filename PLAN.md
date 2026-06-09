@@ -26,6 +26,31 @@
       Typed-fib examples (binary ops only; structural forms stay prefix). Each converted
       snippet was executed and verified (fib→55, abs→5, let→30, typed fib→55).
 
+## Done (2026-06-09 EST) — ./doctest (Elixir-style README doctests)
+Hybrid: unannotated `#lang racket-sugar` blocks must run clean (exit 0); lines with
+trailing `; => VALUE` also assert that program's stdout (ordered). `; doctest: skip`
+opts a block out (illustrative examples with placeholder identifiers).
+- [x] TDD pure core (parse-fenced-blocks, racket-sugar-block?, block-expectations,
+      block-skip?, check-expectations) — tests/doctest-test.rkt, 9 tests.
+- [x] `tools/doctest.rkt` harness (writes temp .trk at repo root for relative requires).
+- [x] `./doctest [file]` wrapper (default README.md); folded into `./test` too.
+- [x] Ran against real README; found + fixed 3 broken examples:
+      - keywords example used spaces not tabs (would error on copy-paste) — fixed.
+      - line-continuation example uses placeholder fns — marked `; doctest: skip`.
+      - typed example failed type-check — rewrote to inference form + value checks.
+- [x] Converted infix section `; → ..= N` comments → checkable `; => N`. All green.
+
+## Real finding (surfaced by doctest) — needs decision
+- [ ] `racket-sugar/typed`: an explicit value annotation on an imported parametric type
+      (`: my-map HAMT` before `define my-map (hamt "key" 42)`) fails type-check — the
+      value is seen as `Any`. Function-type annotations (`: fib (Integer ~-> Integer)`)
+      work. Worth a failing test + fix in the typed reader. README now documents the
+      workaround (let inference assign the type).
+
+## Future language sugar ideas (from Peter)
+- [ ] Add sugar to change the comment char from `;` to `//` (or `#`, but `#` collides
+      with `#lang`/`#rx`/`#t`). Peter: "what the hell were they thinking?" re Lisp `;`.
+
 ## Open / optional
 - [ ] Peter's extra ask: benchmark racket-sugar vs zig for an example algorithm
       (e.g. fibonacci) with hyperfine. Not yet done — awaiting go-ahead / which algorithm.

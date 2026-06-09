@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Run Elixir-style doctests over a Markdown file's #lang racket-sugar code blocks.
+# Usage: ./doctest [file]   (default: README.md)
+set -u
+cd "$(dirname "$0")"
+export PLTCOLLECTS="$(pwd):"
+exec nix develop --command racket tools/doctest.rkt "${1:-README.md}"

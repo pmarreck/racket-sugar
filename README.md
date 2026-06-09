@@ -165,9 +165,9 @@ displayln (hamt-ref person :name)  ; prints "Alice"
 
 ;; Works in function calls and comparisons
 define (greet who)
-    if (equal? who :world)
-        displayln "Hello, World!"
-        displayln (format "Hello, ~a!" who)
+	if (equal? who :world)
+		displayln "Hello, World!"
+		displayln (format "Hello, ~a!" who)
 
 greet :world
 ```
@@ -182,23 +182,23 @@ For binary operations, you can use infix syntax with the `~` prefix. `(a ~func b
 #lang racket-sugar
 
 ;; Arithmetic - more readable than prefix
-displayln (1 ~+ 2)              ; → (+ 1 2) = 3
-displayln (10 ~- 3)             ; → (- 10 3) = 7
-displayln (4 ~* 5)              ; → (* 4 5) = 20
-displayln (10 ~/ 2)             ; → (/ 10 2) = 5
+displayln (1 ~+ 2)              ; => 3
+displayln (10 ~- 3)             ; => 7
+displayln (4 ~* 5)              ; => 20
+displayln (10 ~/ 2)             ; => 5
 
 ;; Comparisons
-displayln (5 ~< 10)             ; → (< 5 10) = #t
-displayln (5 ~> 10)             ; → (> 5 10) = #f
-displayln (5 ~= 5)              ; → (= 5 5) = #t
+displayln (5 ~< 10)             ; => #t
+displayln (5 ~> 10)             ; => #f
+displayln (5 ~= 5)              ; => #t
 
 ;; Any binary function works
-displayln (17 ~modulo 5)        ; → (modulo 17 5) = 2
-displayln ("hello" ~string-append " world")  ; → "hello world"
+displayln (17 ~modulo 5)        ; => 2
+displayln ("hello" ~string-append " world")  ; => hello world
 
 ;; Nested expressions - use parens for precedence
-displayln (1 ~+ (2 ~* 3))       ; → (+ 1 (* 2 3)) = 7
-displayln ((10 ~- 2) ~* 3)      ; → (* (- 10 2) 3) = 24
+displayln (1 ~+ (2 ~* 3))       ; => 7
+displayln ((10 ~- 2) ~* 3)      ; => 24
 
 ;; Works in function bodies
 define (add x y)
@@ -243,6 +243,7 @@ Long lines can be continued using `\` at the end of a line. All leading whitespa
 ```
 #lang racket-sugar
 
+; doctest: skip  (illustrative syntax — references placeholder functions)
 ;; Align args visually with spaces
 define result (some-long-function-name "first-arg" \
                                        "second-arg" \
@@ -537,14 +538,19 @@ Both persistent data structures have fully typed versions that can be used direc
 
 require "hamt/typed-main.rkt" "pvector/typed-main.rkt"
 
-;; Types are: HAMT, PVector
-: my-map HAMT
+;; hamt and pvector are typed: their results are HAMT and PVector.
+;; Let inference assign the types (see note below on explicit annotations).
 define my-map (hamt "key" 42)
-
-: my-vec PVector
 define my-vec (pvector 1 2 3)
+
+displayln (hamt-count my-map)       ; => 1
+displayln (pvector-length my-vec)   ; => 3
 ```
 
+> **Note:** Prefer letting inference assign these types. An explicit value annotation
+> on an imported parametric type — e.g. `: my-map HAMT` immediately before
+> `define my-map (hamt "key" 42)` — currently fails to type-check (the value is seen as
+> `Any`). Function-type annotations (e.g. `: fib (Integer ~-> Integer)`) work fine.
 The typed versions use `unsafe-fxpopcount` and other unsafe operations internally for performance while maintaining type safety at the API boundary.
 
 ## Performance
