@@ -250,8 +250,35 @@
 		 (map auto-quote-keyword v)]
 		[else v]))
 
+;; Strip a `# ` (hash-space) line comment (aliases `;`, does not replace it). A `#`
+;; starts a comment only when immediately followed by space/tab, so #t/#(...)/#:kw/#\char
+;; are untouched; string and #\char literals are respected. See racket-sugar/main.rkt.
+(define (strip-hash-comment line)
+	(define len (string-length line))
+	(let loop ([i 0] [in-string? #f])
+		(cond
+			[(>= i len) line]
+			[in-string?
+			 (let ([c (string-ref line i)])
+				 (cond
+					 [(char=? c #\\) (loop (+ i 2) #t)]
+					 [(char=? c #\") (loop (+ i 1) #f)]
+					 [else (loop (+ i 1) #t)]))]
+			[else
+			 (let ([c (string-ref line i)])
+				 (cond
+					 [(char=? c #\") (loop (+ i 1) #t)]
+					 [(and (char=? c #\#) (< (+ i 1) len)
+								 (char=? (string-ref line (+ i 1)) #\\))
+						(loop (+ i 3) #f)]
+					 [(and (char=? c #\#) (< (+ i 1) len)
+								 (let ([n (string-ref line (+ i 1))])
+									 (or (char=? n #\space) (char=? n #\tab))))
+						(substring line 0 i)]
+					 [else (loop (+ i 1) #f)]))])))
+
 (define (tokenize-line str)
-	(let ([in (open-input-string str)])
+	(let ([in (open-input-string (strip-hash-comment str))])
 		(let loop ([tokens '()])
 			(let ([token (read-with-table in clojure-readtable)])
 				(if (eof-object? token)

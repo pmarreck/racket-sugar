@@ -12,6 +12,7 @@ exec nix develop --command bash -c '
 	raco test \
 		tests/racket-sugar-test.rkt \
 		tests/typed-reader-test.rkt \
+		tests/comment-test.rkt \
 		tests/examples-test.rkt \
 		tests/hamt-test.rkt \
 		tests/pvector-test.rkt \

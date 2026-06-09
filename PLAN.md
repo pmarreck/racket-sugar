@@ -54,9 +54,13 @@ opts a block out (illustrative examples with placeholder identifiers).
       transform-type-arrow globally in racket-sugar/typed read/read-syntax.
 - [x] Benchmark README + runner now cover all 9 implementations (cross-checked).
 
+## Done (2026-06-09 EST) — `# ` comment alias
+- [x] Added `# ` (hash-space) line comments as an ALIAS of `;` (both work) in BOTH the
+      untyped and typed readers via strip-hash-comment in tokenize-line. `#`+space/tab =
+      comment; `#`+non-space (#t #f #(...) #:kw #\char) stays reader syntax; strings and
+      #\char literals respected. TDD: tests/comment-test.rkt (10 tests). README documents it.
+
 ## TODO next
-- [ ] Investigate comment-char: alias `# ` (hash-space) as a comment alongside `;`
-      (aliasing, not replacement — `;` stays; `#`+non-space stays reader syntax).
 - [ ] (optional) Fixnum-typed variant to test whether TR's optimizer beats untyped.
 
 ## Real finding (surfaced by doctest) — needs decision

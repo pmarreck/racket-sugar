@@ -122,6 +122,24 @@ define (add a b)    ; parent line has tokens: define, (add a b)
 
 Empty lines and lines containing only whitespace are ignored.
 
+### Comments
+
+Two line-comment markers are supported (they are **aliases** — both work):
+
+- `;` — the traditional Lisp/Racket comment.
+- `# ` — a hash followed by a **space** (or tab). Familiar from shell, Python, and Ruby.
+
+```
+#lang racket-sugar
+
+# a full-line hash-space comment
+displayln (1 ~+ 2)   # trailing comment, like shell/Python
+displayln (3 ~* 4)   ; the classic ; comment still works too
+```
+
+The space after `#` is required, which is what keeps it unambiguous: `#t`, `#f`,
+`#(1 2 3)`, `#:keyword`, and `#\a` are reader syntax (no space after `#`) and are left
+untouched, and a `#` inside a string is literal.
 ### Clojure-style Persistent Data Structures
 
 `racket-sugar` supports Clojure-style syntax for **persistent** vectors and hash maps. These are immutable by default with efficient structural sharing:

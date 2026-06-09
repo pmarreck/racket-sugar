@@ -226,8 +226,39 @@
 		 (map auto-quote-keyword v)]
 		[else v]))
 
+;; Strip a `# ` (hash-space) line comment, returning the line truncated at the comment.
+;; ALIASES `;` (does not replace it). A `#` starts a comment ONLY when immediately
+;; followed by a space or tab, so reader syntax (#t #f #(...) #:kw #\char) is untouched.
+;; String literals (with \ escapes) and #\char literals are respected so a `#` inside
+;; them is never treated as a marker.
+(define (strip-hash-comment line)
+	(define len (string-length line))
+	(let loop ([i 0] [in-string? #f])
+		(cond
+			[(>= i len) line]
+			[in-string?
+			 (let ([c (string-ref line i)])
+				 (cond
+					 [(char=? c #\\) (loop (+ i 2) #t)]
+					 [(char=? c #\") (loop (+ i 1) #f)]
+					 [else (loop (+ i 1) #t)]))]
+			[else
+			 (let ([c (string-ref line i)])
+				 (cond
+					 [(char=? c #\") (loop (+ i 1) #t)]
+					 ;; #\<char> literal: skip the # \ and the char so #\# etc. isn't a marker
+					 [(and (char=? c #\#) (< (+ i 1) len)
+								 (char=? (string-ref line (+ i 1)) #\\))
+						(loop (+ i 3) #f)]
+					 ;; # followed by space/tab -> comment starts here
+					 [(and (char=? c #\#) (< (+ i 1) len)
+								 (let ([n (string-ref line (+ i 1))])
+									 (or (char=? n #\space) (char=? n #\tab))))
+						(substring line 0 i)]
+					 [else (loop (+ i 1) #f)]))])))
+
 (define (tokenize-line str)
-	(let ([in (open-input-string str)])
+	(let ([in (open-input-string (strip-hash-comment str))])
 		(let loop ([tokens '()])
 			(let ([token (read-with-table in clojure-readtable)])
 				(if (eof-object? token)
