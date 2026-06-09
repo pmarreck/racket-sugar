@@ -50,12 +50,25 @@ intrinsically in-place, so doing it on immutable lists fights the algorithm; mer
 (what `sort`/`Enum.sort` use) is naturally functional. **The "immutability tax" was an
 algorithm mismatch, not immutability itself.**
 
-**3. Types here cost speed, they don't buy it.** Every typed variant is ~25–35% *slower*
-than its untyped twin. Reason: the code is typed with `Integer`, which is
-arbitrary-precision — Typed Racket's numeric optimizer can't specialize it, so you get
-the same generic arithmetic *plus* boundary/check overhead. Types here are for safety and
-documentation, not speed. (Typing the hot paths with `Fixnum`/`Index` instead would let
-the TR optimizer kick in and could *flip* this — a worthwhile follow-up.)
+**3. Types cost speed here; untyped is the sweet spot.** Every typed variant is *slower*
+than its untyped twin — and a `Fixnum`-typed version (the hypothesis that it would be
+*faster*) is the slowest of all. The full mutable-vector spectrum at n = 1M:
+
+| variant | time | vs untyped |
+|---|---:|---:|
+| racket — `racket/unsafe/ops` (no checks) | ~270 ms | 0.96× |
+| **racket — untyped** | **~282 ms** | **1.0×** |
+| racket — `Integer`-typed | ~392 ms | 1.39× |
+| racket — `Fixnum`-typed (`fx+`/`fx*`…) | ~442 ms | 1.57× |
+
+Why: Chez Scheme (Racket CS) already inlines fixnum fast-paths in *generic* arithmetic and
+keeps bounds checks cheap, so plain untyped code lands within ~4% of fully-unchecked
+unsafe ops. Types have nothing left to specialize and only add overhead (the
+`require/typed` boundary, runtime asserts). `Fixnum` is *worst* because `fx+`/`fx*` are
+safe-*checked* ops, and Typed Racket can't prove `fx*` won't overflow, so it keeps the
+check on top of TR's overhead. **Takeaway: in Racket CS you type for safety/clarity, not
+speed; reach for `racket/unsafe/ops` only when you must, and even then the win is marginal
+because the checks were nearly free.**
 
 **4. Elixir: startup dominates, the sort competes.** On total time the BEAM's ~266 ms boot
 makes Elixir look slow, but its *sorts* are competitive (Enum.sort ~209 ms sort-only vs

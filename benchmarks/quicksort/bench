@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Reproducible quicksort benchmark across implementations & paradigms:
 #   Zig (native in-place) | racket-sugar {mutable vector, immutable list, built-in sort}
-#   in both untyped and typed dialects | Elixir {list quicksort, built-in Enum.sort}.
-# Elixir entries are skipped if `elixir` is absent.
+#   across untyped / Integer-typed / Fixnum-typed / unsafe-ops dialects | Elixir {list
+#   quicksort, built-in Enum.sort}.  Elixir entries are skipped if `elixir` is absent.
 # Usage: ./benchmarks/quicksort/bench [N]   (default N=1000000)
 set -u
 cd "$(dirname "$0")/../.."          # repo root
@@ -16,12 +16,14 @@ exec nix develop --command bash -c '
 
 	zig build-exe $B/quicksort.zig -O ReleaseFast -femit-bin=$B/quicksort_zig
 	raco make $B/quicksort.trk $B/quicksort-mutable.trk $B/stdsort.trk \
-		$B/quicksort-typed.trk $B/quicksort-mutable-typed.trk $B/stdsort-typed.trk >/dev/null
+		$B/quicksort-typed.trk $B/quicksort-mutable-typed.trk $B/stdsort-typed.trk \
+		$B/quicksort-mutable-fixnum.trk $B/quicksort-mutable-unsafe.trk >/dev/null
 
 	ref=$($B/quicksort_zig "$N")
 	for cmd in \
 		"racket $B/quicksort.trk" "racket $B/quicksort-mutable.trk" "racket $B/stdsort.trk" \
-		"racket $B/quicksort-typed.trk" "racket $B/quicksort-mutable-typed.trk" "racket $B/stdsort-typed.trk"; do
+		"racket $B/quicksort-typed.trk" "racket $B/quicksort-mutable-typed.trk" "racket $B/stdsort-typed.trk" \
+		"racket $B/quicksort-mutable-fixnum.trk" "racket $B/quicksort-mutable-unsafe.trk"; do
 		got=$($cmd "$N")
 		[ "$got" = "$ref" ] || { echo "CHECKSUM MISMATCH: $cmd -> $got (want $ref)"; exit 1; }
 	done
@@ -35,13 +37,15 @@ exec nix develop --command bash -c '
 	echo "checksum=$ref (all implementations agree)"
 
 	args=(--warmup 3 -N
-		--command-name "Zig (in-place array)"                "$B/quicksort_zig $N"
-		--command-name "racket mutable vector (untyped)"     "racket $B/quicksort-mutable.trk $N"
-		--command-name "racket mutable vector (typed)"       "racket $B/quicksort-mutable-typed.trk $N"
-		--command-name "racket built-in sort (untyped)"      "racket $B/stdsort.trk $N"
-		--command-name "racket built-in sort (typed)"        "racket $B/stdsort-typed.trk $N"
-		--command-name "racket immutable list qs (untyped)"  "racket $B/quicksort.trk $N"
-		--command-name "racket immutable list qs (typed)"    "racket $B/quicksort-typed.trk $N")
+		--command-name "Zig (in-place array)"                 "$B/quicksort_zig $N"
+		--command-name "racket mutable vector (unsafe ops)"   "racket $B/quicksort-mutable-unsafe.trk $N"
+		--command-name "racket mutable vector (untyped)"      "racket $B/quicksort-mutable.trk $N"
+		--command-name "racket mutable vector (Integer-typed)" "racket $B/quicksort-mutable-typed.trk $N"
+		--command-name "racket mutable vector (Fixnum-typed)" "racket $B/quicksort-mutable-fixnum.trk $N"
+		--command-name "racket built-in sort (untyped)"       "racket $B/stdsort.trk $N"
+		--command-name "racket built-in sort (typed)"         "racket $B/stdsort-typed.trk $N"
+		--command-name "racket immutable list qs (untyped)"   "racket $B/quicksort.trk $N"
+		--command-name "racket immutable list qs (typed)"     "racket $B/quicksort-typed.trk $N")
 	if [ "$have_elixir" = 1 ]; then
 		args+=(--command-name "Elixir built-in Enum.sort" "elixir $B/stdsort.exs $N"
 		       --command-name "Elixir immutable list qs"  "elixir $B/quicksort.exs $N")

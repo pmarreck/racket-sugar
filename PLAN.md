@@ -60,8 +60,16 @@ opts a block out (illustrative examples with placeholder identifiers).
       comment; `#`+non-space (#t #f #(...) #:kw #\char) stays reader syntax; strings and
       #\char literals respected. TDD: tests/comment-test.rkt (10 tests). README documents it.
 
+## Done (2026-06-09 EST) — Fixnum experiment (hypothesis DISPROVEN)
+- [x] Built Fixnum-typed (explicit fx ops) + unsafe-ops mutable quicksort variants.
+      Result at n=1M: unsafe 270ms ~= untyped 282ms < Integer-typed 392ms < Fixnum 442ms.
+      Fixnum is SLOWEST, not fastest. Chez already inlines generic fixnum arithmetic
+      and keeps bounds checks cheap (untyped within ~4% of unsafe); fx ops are
+      safe-CHECKED and TR can't prove no-overflow, so it adds checks. Untyped is the
+      Racket-CS sweet spot. Documented in benchmark README finding #3 (corrected).
+
 ## TODO next
-- [ ] (optional) Fixnum-typed variant to test whether TR's optimizer beats untyped.
+- (nothing outstanding)
 
 ## Real finding (surfaced by doctest) — needs decision
 - [ ] `racket-sugar/typed`: an explicit value annotation on an imported parametric type

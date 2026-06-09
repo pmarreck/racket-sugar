@@ -1,0 +1,44 @@
+#lang racket-sugar
+
+;; In-place mutable-vector quicksort using racket/unsafe/ops — NO bounds checks, NO
+;; fixnum checks. This is Racket's realistic ceiling for this algorithm (you trade all
+;; safety for speed). Correct only because indices stay in bounds and values stay fixnum.
+require racket/unsafe/ops
+
+define (swap! v i j)
+	let ((t (unsafe-vector-ref v i)))
+		unsafe-vector-set! v i (unsafe-vector-ref v j)
+		unsafe-vector-set! v j t
+
+define (partition! v lo hi)
+	let ((pivot (unsafe-vector-ref v hi)))
+		let loop ((i lo) (j lo))
+			cond
+				(unsafe-fx>= j hi)
+					swap! v i hi
+					i
+				(unsafe-fx< (unsafe-vector-ref v j) pivot)
+					swap! v i j
+					loop (unsafe-fx+ i 1) (unsafe-fx+ j 1)
+				else
+					loop i (unsafe-fx+ j 1)
+
+define (qsort! v lo hi)
+	when (unsafe-fx< lo hi)
+		let ((p (partition! v lo hi)))
+			qsort! v lo (unsafe-fx- p 1)
+			qsort! v (unsafe-fx+ p 1) hi
+
+define n (string->number (vector-ref (current-command-line-arguments) 0))
+define v (make-vector n 0)
+let loop ((i 0) (x 42))
+	when (unsafe-fx< i n)
+		let ((nx (unsafe-fxmodulo (unsafe-fx* 48271 x) 2147483647)))
+			unsafe-vector-set! v i nx
+			loop (unsafe-fx+ i 1) nx
+qsort! v 0 (unsafe-fx- n 1)
+displayln
+	let loop ((i 0) (acc 0))
+		if (unsafe-fx>= i n)
+			acc
+			loop (unsafe-fx+ i 1) (unsafe-fxmodulo (unsafe-fx+ acc (unsafe-fx* (unsafe-fx+ i 1) (unsafe-vector-ref v i))) 1000000007)

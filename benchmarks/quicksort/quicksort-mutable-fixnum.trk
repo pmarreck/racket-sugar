@@ -1,0 +1,48 @@
+#lang racket-sugar/typed
+
+;; Fixnum-typed in-place mutable-vector quicksort. Uses explicit fx* / fx+ / fxmodulo /
+;; fx< etc. so Typed Racket's optimizer emits unsafe machine-integer ops (no generic
+;; dispatch, no bignum-overflow checks). All values stay within Fixnum range:
+;;   MINSTD 48271*x < 1.04e14, checksum (i+1)*v[i] < 2.1e15, both << fixnum max (~1.15e18).
+require racket/fixnum
+
+: swap! ((Vectorof Fixnum) Fixnum Fixnum ~-> Void)
+define (swap! v i j)
+	let ((t (vector-ref v i)))
+		vector-set! v i (vector-ref v j)
+		vector-set! v j t
+
+: partition! ((Vectorof Fixnum) Fixnum Fixnum ~-> Fixnum)
+define (partition! v lo hi)
+	let ((pivot (vector-ref v hi)))
+		let loop ((i : Fixnum lo) (j : Fixnum lo))
+			cond
+				(fx>= j hi)
+					swap! v i hi
+					i
+				(fx< (vector-ref v j) pivot)
+					swap! v i j
+					loop (fx+ i 1) (fx+ j 1)
+				else
+					loop i (fx+ j 1)
+
+: qsort! ((Vectorof Fixnum) Fixnum Fixnum ~-> Void)
+define (qsort! v lo hi)
+	when (fx< lo hi)
+		let ((p (partition! v lo hi)))
+			qsort! v lo (fx- p 1)
+			qsort! v (fx+ p 1) hi
+
+define n (assert (string->number (vector-ref (current-command-line-arguments) 0)) fixnum?)
+define v (ann (make-vector n 0) (Vectorof Fixnum))
+let loop ((i : Fixnum 0) (x : Fixnum 42))
+	when (fx< i n)
+		let ((nx (fxmodulo (fx* 48271 x) 2147483647)))
+			vector-set! v i nx
+			loop (fx+ i 1) nx
+qsort! v 0 (fx- n 1)
+displayln
+	let loop ((i : Fixnum 0) (acc : Fixnum 0))
+		if (fx>= i n)
+			acc
+			loop (fx+ i 1) (fxmodulo (fx+ acc (fx* (fx+ i 1) (vector-ref v i))) 1000000007)
