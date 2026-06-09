@@ -1,4 +1,4 @@
-#lang tab-racket
+#lang racket-sugar
 
 define (fib n)
 	cond

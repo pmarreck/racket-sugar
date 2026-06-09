@@ -1,7 +1,7 @@
-#lang tab-racket/typed
+#lang racket-sugar/typed
 
 ;; Simple Counter - Typed Variant
-;; Demonstrates all tab-racket dialect features:
+;; Demonstrates all racket-sugar dialect features:
 ;; - Persistent hash map syntax {}
 ;; - Persistent vector syntax []
 ;; - Significant tabbed indentation

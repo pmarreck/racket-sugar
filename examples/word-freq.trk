@@ -1,7 +1,7 @@
-#lang tab-racket
+#lang racket-sugar
 
 ;; Word Frequency Counter
-;; Demonstrates tab-racket with persistent data structures
+;; Demonstrates racket-sugar with persistent data structures
 ;; 
 ;; Features shown:
 ;; - {} syntax for persistent HAMT (hash maps)
@@ -69,7 +69,7 @@ define demo-persistence
 
 ;; Run the demo
 displayln "╔══════════════════════════════════════════╗"
-displayln "║   Word Frequency Counter (tab-racket)    ║"
+displayln "║   Word Frequency Counter (racket-sugar)    ║"
 displayln "╚══════════════════════════════════════════╝"
 displayln ""
 displayln (format "Input: ~a" sample-text)

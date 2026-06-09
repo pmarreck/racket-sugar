@@ -370,4 +370,4 @@ With 64-way branching:
 5. Add HashCollisionNode
 6. Implement delete
 7. Benchmark against current hasheq
-8. Integrate with tab-racket `{}` syntax
+8. Integrate with racket-sugar `{}` syntax

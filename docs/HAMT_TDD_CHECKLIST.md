@@ -158,7 +158,7 @@ Each task follows TDD: write failing test first, then implement to make it pass.
 ### 9.1 Type Definitions
 - [x] Define HAMT type
 - [x] Define typed versions of all operations
-- [x] Update `tab-racket/typed` to use typed HAMT
+- [x] Update `racket-sugar/typed` to use typed HAMT
 
 ---
 
@@ -205,7 +205,7 @@ Each task follows TDD: write failing test first, then implement to make it pass.
 | Phase 6: Iteration | ✅ Complete | fold, ->list, keys, values |
 | Phase 7: Performance | ✅ Complete | O(log n) confirmed |
 | Phase 8: Integration | ✅ Complete | hash-ref/set compat aliases |
-| Phase 9: Typed Racket | ✅ Complete | tab-racket/typed working |
+| Phase 9: Typed Racket | ✅ Complete | racket-sugar/typed working |
 | Phase 10: PVector | ✅ Complete | Typed version done |
 
 **Key Accomplishments:**

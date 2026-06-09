@@ -1,4 +1,4 @@
-#lang tab-racket/typed
+#lang racket-sugar/typed
 
 ;; S3-FIFO (Simple, Scalable, FIFO-based) Cache Implementation - Typed Variant
 ;; A simpler, often faster alternative to ARC

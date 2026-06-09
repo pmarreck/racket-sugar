@@ -7,14 +7,14 @@ Create a Racket syntax variant that uses significant **tab-based** indentation i
 
 ## Status: ✅ Core Complete
 
-The core `tab-racket` language is functional with the following features:
+The core `racket-sugar` language is functional with the following features:
 
 ### Completed Features
-- **Tab-based significant indentation** - `#lang tab-racket` parses tabs-only indentation
-- **Typed variant** - `#lang tab-racket/typed` for full type annotations
+- **Tab-based significant indentation** - `#lang racket-sugar` parses tabs-only indentation
+- **Typed variant** - `#lang racket-sugar/typed` for full type annotations
 - **Persistent data structures** - `[]` for PVector, `{}` for HAMT with O(log n) operations
 - **Self-evaluating keywords** - `:foo` symbols auto-quote like Clojure/Ruby/Elixir atoms
-- **File extension convention** - `.trk` for tab-racket source files
+- **File extension convention** - `.trk` for racket-sugar source files
 - **Comprehensive test suite** - Unit tests + integration tests for all examples
 - **Production examples** - ARC and S3-FIFO cache implementations with benchmarks
 
@@ -41,5 +41,5 @@ The core `tab-racket` language is functional with the following features:
 
 ## Future Work
 - Line continuation with `\`
-- CLI converter: tab-racket ↔ standard Racket
+- CLI converter: racket-sugar ↔ standard Racket
 - IDE/editor integration (syntax highlighting, indentation guides)

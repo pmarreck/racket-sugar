@@ -1,7 +1,7 @@
-#lang tab-racket/typed
+#lang racket-sugar/typed
 
 ;; ARC (Adaptive Replacement Cache) Implementation - Typed Variant
-;; Demonstrates typed tab-racket dialect features:
+;; Demonstrates typed racket-sugar dialect features:
 ;; - Persistent hash map syntax {} with keyword keys
 ;; - Persistent vector syntax []
 ;; - Significant tabbed indentation

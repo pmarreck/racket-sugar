@@ -1,10 +1,10 @@
-# tab-racket
+# racket-sugar
 
 A Racket language variant that uses significant **tab-based indentation** instead of parentheses, with **Clojure-style persistent data structures**.
 
 ## Overview
 
-`tab-racket` lets you write Racket code using indentation to denote structure, similar to Python or Haskell. Instead of wrapping expressions in parentheses, you indent child expressions under their parent.
+`racket-sugar` lets you write Racket code using indentation to denote structure, similar to Python or Haskell. Instead of wrapping expressions in parentheses, you indent child expressions under their parent.
 
 ### Key Features
 
@@ -14,20 +14,18 @@ A Racket language variant that uses significant **tab-based indentation** instea
 - **Persistent vectors** - `[]` creates immutable, structurally-shared vectors with O(log32 n) operations
 - **Persistent hash maps** - `{}` creates HAMTs (Hash Array Mapped Tries) with O(log64 n) operations
 - **Self-evaluating keywords** - `:foo` symbols auto-evaluate like Clojure/Ruby/Elixir atoms
-- **Typed Racket support** - `#lang tab-racket/typed` for full type annotations
-- **File extension** - Use `.trk` ("tabbed racket") for tab-racket source files
+- **Typed Racket support** - `#lang racket-sugar/typed` for full type annotations
+- **File extension** - Use `.trk` ("tabbed racket") for racket-sugar source files
 
 ```
-#lang tab-racket
+#lang racket-sugar
 
 define (fib n)
 	cond
-		(= n 0) 0
-		(= n 1) 1
+		(n ~= 0) 0
+		(n ~= 1) 1
 		else
-			+
-				fib (- n 1)
-				fib (- n 2)
+			(fib (n ~- 1)) ~+ (fib (n ~- 2))
 
 displayln
 	fib 10
@@ -56,7 +54,7 @@ This is equivalent to:
 ### Using raco
 
 ```bash
-cd tab-racket
+cd racket-sugar
 raco pkg install
 ```
 
@@ -70,10 +68,10 @@ nix develop
 
 ## Usage
 
-Create a file with the `#lang tab-racket` directive:
+Create a file with the `#lang racket-sugar` directive:
 
 ```
-#lang tab-racket
+#lang racket-sugar
 displayln "Hello, tabs!"
 ```
 
@@ -126,7 +124,7 @@ Empty lines and lines containing only whitespace are ignored.
 
 ### Clojure-style Persistent Data Structures
 
-`tab-racket` supports Clojure-style syntax for **persistent** vectors and hash maps. These are immutable by default with efficient structural sharing:
+`racket-sugar` supports Clojure-style syntax for **persistent** vectors and hash maps. These are immutable by default with efficient structural sharing:
 
 | Syntax | Data Structure | Complexity |
 |--------|----------------|------------|
@@ -136,7 +134,7 @@ Empty lines and lines containing only whitespace are ignored.
 | `!{k1 v1 k2 v2}` | Mutable Racket hash | O(1) amortized |
 
 ```
-#lang tab-racket
+#lang racket-sugar
 
 ; Persistent by default - updates return new structure, original unchanged
 define scores {"alice" 95 "bob" 87}
@@ -159,7 +157,7 @@ Note: Since `[]` now creates persistent vectors, use parentheses `()` for list o
 Keywords (symbols starting with `:`) are automatically self-evaluating, like atoms in Clojure, Ruby, or Elixir:
 
 ```
-#lang tab-racket
+#lang racket-sugar
 
 ;; Keywords evaluate to themselves - no quoting needed!
 define person {:name "Alice" :age 30}
@@ -174,14 +172,14 @@ define (greet who)
 greet :world
 ```
 
-Note: Bare `:` is reserved for type annotations in `tab-racket/typed` and is not auto-quoted.
+Note: Bare `:` is reserved for type annotations in `racket-sugar/typed` and is not auto-quoted.
 
 ### Infix Operators (`~func`)
 
 For binary operations, you can use infix syntax with the `~` prefix. `(a ~func b)` transforms to `(func a b)`:
 
 ```
-#lang tab-racket
+#lang racket-sugar
 
 ;; Arithmetic - more readable than prefix
 displayln (1 ~+ 2)              ; → (+ 1 2) = 3
@@ -210,10 +208,10 @@ define (quadratic a b c x)
 	(a ~* (x ~* x)) ~+ ((b ~* x) ~+ c)
 ```
 
-Works with `#lang tab-racket/typed` too:
+Works with `#lang racket-sugar/typed` too:
 
 ```
-#lang tab-racket/typed
+#lang racket-sugar/typed
 
 : add (Integer Integer ~-> Integer)
 define (add x y)
@@ -243,7 +241,7 @@ Note: The `~` prefix is only special when followed by an identifier. The tilde c
 Long lines can be continued using `\` at the end of a line. All leading whitespace on continuation lines is stripped, allowing flexible visual alignment:
 
 ```
-#lang tab-racket
+#lang racket-sugar
 
 ;; Align args visually with spaces
 define result (some-long-function-name "first-arg" \
@@ -315,23 +313,21 @@ define (process-data data)
 ### Hello World
 
 ```
-#lang tab-racket
+#lang racket-sugar
 displayln "Hello, tabs!"
 ```
 
 ### Fibonacci
 
 ```
-#lang tab-racket
+#lang racket-sugar
 
 define (fib n)
 	cond
-		(= n 0) 0
-		(= n 1) 1
+		(n ~= 0) 0
+		(n ~= 1) 1
 		else
-			+
-				fib (- n 1)
-				fib (- n 2)
+			(fib (n ~- 1)) ~+ (fib (n ~- 2))
 
 displayln
 	fib 10
@@ -340,10 +336,10 @@ displayln
 ### Conditionals
 
 ```
-#lang tab-racket
+#lang racket-sugar
 
 define (abs x)
-	if (< x 0)
+	if (x ~< 0)
 		- x
 		x
 
@@ -354,21 +350,21 @@ displayln
 ### Let Bindings
 
 ```
-#lang tab-racket
+#lang racket-sugar
 
 let
 	((x 10) (y 20))
-	+ x y
+	x ~+ y
 ```
 
-Note: Use parentheses `()` for let bindings since `[]` creates vectors in tab-racket.
+Note: Use parentheses `()` for let bindings since `[]` creates vectors in racket-sugar.
 
 ### Word Frequency Counter (Persistent Data Structures)
 
 This example demonstrates persistent vectors and HAMTs:
 
 ```
-#lang tab-racket
+#lang racket-sugar
 
 define sample-text "the quick brown fox jumps over the lazy dog the fox was quick"
 
@@ -383,7 +379,7 @@ define count-words
 		foldl
 			lambda (word freq-map)
 				define current (hamt-ref freq-map word 0)
-				hamt-set freq-map word (+ current 1)
+				hamt-set freq-map word (current ~+ 1)
 			{}
 			words
 
@@ -460,7 +456,7 @@ BENCH_OPS=10000 BENCH_SEED=42 racket tests/cache-bench.trk  # Both
 ## Running Tests
 
 ```bash
-raco test tests/tab-racket-test.rkt tests/examples-test.rkt
+raco test tests/racket-sugar-test.rkt tests/examples-test.rkt
 ```
 
 Or run all tests in the tests directory:
@@ -473,12 +469,12 @@ raco test tests/
 
 ```
 .
-├── tab-racket/
+├── racket-sugar/
 │   ├── main.rkt          # Core reader and parser (untyped)
 │   ├── typed/
 │   │   └── main.rkt      # Typed variant reader
 │   ├── lang/
-│   │   └── reader.rkt    # #lang tab-racket support
+│   │   └── reader.rkt    # #lang racket-sugar support
 │   └── info.rkt          # Package metadata
 ├── hamt/
 │   ├── main.rkt          # HAMT implementation (untyped)
@@ -498,11 +494,11 @@ raco test tests/
 │   ├── sieve-cache.trk     # SIEVE 1-bit cache (typed)
 │   └── sieve2-cache.trk    # SIEVE 2-bit cache (typed)
 ├── tests/
-│   ├── tab-racket-test.rkt  # Parser test suite
+│   ├── racket-sugar-test.rkt  # Parser test suite
 │   ├── hamt-test.rkt        # HAMT test suite
 │   ├── pvector-test.rkt     # PVector test suite
-│   ├── hash-api-test.trk    # HAMT API demo (tab-racket)
-│   ├── pvector-api-test.trk # PVector API demo (tab-racket)
+│   ├── hash-api-test.trk    # HAMT API demo (racket-sugar)
+│   ├── pvector-api-test.trk # PVector API demo (racket-sugar)
 │   ├── examples-test.rkt    # Integration tests for examples
 │   └── cache-bench.trk      # Comprehensive cache algorithm benchmark
 ├── flake.nix             # Nix flake configuration
@@ -513,31 +509,31 @@ raco test tests/
 
 ## Typed Racket Support
 
-### Using `#lang tab-racket/typed`
+### Using `#lang racket-sugar/typed`
 
-For type-annotated tab-racket code, use the typed variant:
+For type-annotated racket-sugar code, use the typed variant:
 
 ```
-#lang tab-racket/typed
+#lang racket-sugar/typed
 
 ;; Type annotations use : prefix (like Typed Racket)
 : fib (Integer ~-> Integer)
 define (fib n)
 	cond
-		(= n 0) 0
-		(= n 1) 1
+		(n ~= 0) 0
+		(n ~= 1) 1
 		else
-			+ (fib (- n 1)) (fib (- n 2))
+			(fib (n ~- 1)) ~+ (fib (n ~- 2))
 
 displayln (fib 10)
 ```
 
-### Using Typed Data Structures from tab-racket/typed
+### Using Typed Data Structures from racket-sugar/typed
 
-Both persistent data structures have fully typed versions that can be used directly from tab-racket/typed code without contract overhead:
+Both persistent data structures have fully typed versions that can be used directly from racket-sugar/typed code without contract overhead:
 
 ```
-#lang tab-racket/typed
+#lang racket-sugar/typed
 
 require "hamt/typed-main.rkt" "pvector/typed-main.rkt"
 
@@ -568,7 +564,7 @@ At 100K elements, persistent operations are ~1.5-2x slower than mutable equivale
 - **Tabs only** - Spaces for indentation cause an error
 - Full Racket semantics apply after parsing
 - Persistent vectors use 32-way branching (max ~1 billion elements efficiently)
-- Use `.trk` extension for tab-racket files to distinguish from standard `.rkt` files
+- Use `.trk` extension for racket-sugar files to distinguish from standard `.rkt` files
 
 ## License
 

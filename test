@@ -1,4 +1,22 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# Master test runner: unit + integration tests (NOT benchmarks/fuzz).
+# Uses `set -u` only — never `set -e` in a test script (it would abort on the
+# first non-zero exit, which is the expected behavior of error-path tests).
+set -u
 cd "$(dirname "$0")"
-exec raco test tests
+
+# The racket-sugar collection lives in this repo, uninstalled. Put the repo root
+# on the collection path so `#lang racket-sugar` and `(require racket-sugar/...)`
+# resolve. Trailing ':' keeps the default collection dirs.
+export PLTCOLLECTS="$(pwd):"
+
+# Run inside the nix devShell so `raco` (racket 8.14, cached) is available even
+# when the caller hasn't entered `nix develop` / `direnv allow`.
+exec nix develop --command raco test \
+	tests/racket-sugar-test.rkt \
+	tests/examples-test.rkt \
+	tests/hamt-test.rkt \
+	tests/pvector-test.rkt \
+	tests/property-tests.rkt \
+	tests/hash-api-test.trk \
+	tests/pvector-api-test.trk

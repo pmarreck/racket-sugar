@@ -1,4 +1,4 @@
-#lang tab-racket/typed
+#lang racket-sugar/typed
 
 : fib (Integer ~-> Integer)
 

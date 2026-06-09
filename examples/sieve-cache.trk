@@ -1,4 +1,4 @@
-#lang tab-racket/typed
+#lang racket-sugar/typed
 
 ;; SIEVE Cache Implementation (1-bit metadata) - Typed Variant
 ;; A simple, efficient cache eviction algorithm simpler than LRU

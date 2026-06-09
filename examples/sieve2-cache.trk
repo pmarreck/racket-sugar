@@ -1,4 +1,4 @@
-#lang tab-racket/typed
+#lang racket-sugar/typed
 
 ;; SIEVE-2 Cache Implementation (2-bit metadata) - Typed Variant
 ;; A variant of SIEVE using a 2-bit counter (0-3) instead of a 1-bit flag

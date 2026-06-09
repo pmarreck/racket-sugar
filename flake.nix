@@ -15,7 +15,7 @@
 				pkgs = import nixpkgs { inherit system; config.allowUnsupportedSystem = true; };
 			in {
 			packages.default = pkgs.stdenv.mkDerivation {
-				pname = "tab-racket";
+				pname = "racket-sugar";
 				version = "0.0.1";
 				src = ./.;
 				buildInputs = [ pkgs.racket ];

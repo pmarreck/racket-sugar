@@ -1,7 +1,7 @@
-#lang tab-racket
+#lang racket-sugar
 
 ;; Test PVector API with [] syntax
-;; tab-racket exports pvector-ref, pvector-set, etc.
+;; racket-sugar exports pvector-ref, pvector-set, etc.
 
 define v [1 2 3 4 5]
 

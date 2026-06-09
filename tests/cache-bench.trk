@@ -1,4 +1,4 @@
-#lang tab-racket
+#lang racket-sugar
 
 ;; Comprehensive Cache Benchmark: LRU vs ARC vs S3-FIFO vs SIEVE vs SIEVE-2
 ;; Compares hit rate across multiple access patterns

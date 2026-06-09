@@ -1,9 +1,10 @@
 #lang racket
 (require (only-in racket [read racket-read])
-				 (prefix-in hamt: "../hamt/main.rkt")
-				 (prefix-in pv: "../pvector/main.rkt"))
+				 (prefix-in hamt: "../../hamt/main.rkt")
+				 (prefix-in pv: "../../pvector/main.rkt"))
+
 (provide read read-syntax
-				 ;; Re-export HAMT functions for users
+				 ;; Re-export HAMT functions for typed code
 				 (rename-out [hamt:empty-hamt empty-hamt]
 										 [hamt:hamt hamt]
 										 [hamt:hamt? hamt?]
@@ -18,7 +19,7 @@
 										 [hamt:hamt-keys hamt-keys]
 										 [hamt:hamt-values hamt-values]
 										 [hamt:hamt-fold hamt-fold])
-				 ;; Re-export PVector functions for users
+				 ;; Re-export PVector functions for typed code
 				 (rename-out [pv:empty-pvector empty-pvector]
 										 [pv:pvector pvector]
 										 [pv:pvector? pvector?]
@@ -32,16 +33,16 @@
 										 [pv:pvector->vector pvector->vector]
 										 [pv:list->pvector list->pvector]
 										 [pv:vector->pvector vector->pvector]
-										 [pv:pvector-fold pvector-fold]
-										 [pv:in-pvector in-pvector]))
+										 [pv:pvector-fold pvector-fold]))
+
+;; Typed variant - same parser, but wraps in typed/racket module
 
 ;; --- Clojure-style Literal Support ---
-;; [...]  -> persistent vector (pvector)
+;; [...]  -> persistent vector (PVector)
 ;; ![...] -> mutable vector
-;; {...}  -> persistent HAMT (Hash Array Mapped Trie)
-;; !{...} -> mutable hash map (hasheq)
+;; {...}  -> persistent hash map (HAMT)
+;; !{...} -> mutable hash map
 
-;; Read until closing delimiter, using our custom readtable
 (define (read-delimited-list close-char port readtable)
 	(let loop ([items '()])
 		(skip-whitespace-and-comments port)
@@ -50,7 +51,7 @@
 				[(eof-object? ch)
 				 (error (format "Unexpected EOF, expected '~a'" close-char))]
 				[(char=? ch close-char)
-				 (read-char port)  ; consume closing delimiter
+				 (read-char port)
 				 (reverse items)]
 				[else
 				 (let ([item (read-with-table port readtable)])
@@ -63,7 +64,7 @@
 			[(char-whitespace? ch)
 			 (read-char port)
 			 (skip-whitespace-and-comments port)]
-			[(char=? ch #\;)  ; line comment
+			[(char=? ch #\;)
 			 (read-line port)
 			 (skip-whitespace-and-comments port)]
 			[else (void)])))
@@ -104,30 +105,27 @@
 			(error "Hash literal requires even number of elements (key-value pairs)"))
 		`(hamt ,@(map prepare-for-runtime items))))
 
-;; Helper: quote a value if it needs quoting (symbols need quotes, literals don't)
 (define (maybe-quote v)
 	(cond
 		[(or (number? v) (string? v) (boolean? v) (char? v)) v]
-		[(and (pair? v) (eq? (car v) 'quote)) v]  ; already quoted
+		[(and (pair? v) (eq? (car v) 'quote)) v]
+		;; Persistent structures are values, don't quote
+		[(or (hamt:hamt? v) (pv:pvector? v)) v]
 		[(or (symbol? v) (pair? v) (vector? v) (hash? v)) `(quote ,v)]
 		[else v]))
 
-;; Reader for ![ and !{ -> mutable variants
-;; Returns code that creates mutable data at runtime (literals become immutable when compiled)
 (define (read-bang ch port src line col pos)
 	(let ([next (peek-char port)])
 		(cond
 			[(char=? next #\[)
-			 (read-char port)  ; consume [
+			 (read-char port)
 			 (let ([items (read-delimited-list #\] port clojure-readtable)])
-				 ;; Return (vector item ...) to create mutable vector at runtime
 				 `(vector ,@(map maybe-quote items)))]
 			[(char=? next #\{)
-			 (read-char port)  ; consume {
+			 (read-char port)
 			 (let ([items (read-delimited-list #\} port clojure-readtable)])
 				 (unless (even? (length items))
 					 (error "Hash literal requires even number of elements (key-value pairs)"))
-				 ;; Return (make-hasheq (list (cons 'k 'v) ...)) to create mutable hash at runtime
 				 (let ([pairs (let loop ([items items] [acc '()])
 												(if (null? items)
 														(reverse acc)
@@ -137,25 +135,13 @@
 																		(cons `(cons ,(maybe-quote k) ,(maybe-quote v)) acc)))))])
 					 `(make-hasheq (list ,@pairs))))]
 			[else
-			 ;; Not ![ or !{, so re-read as normal (likely a symbol like !foo)
 			 (let ([sym-str (string-append "!" (symbol->string (racket-read port)))])
 				 (string->symbol sym-str))])))
 
-;; Helper for mutable hash: applies key-value pairs to a hash
-(define (hasheq! h . kvs)
-	(let loop ([kvs kvs])
-		(if (null? kvs)
-				h
-				(begin
-					(hash-set! h (car kvs) (cadr kvs))
-					(loop (cddr kvs))))))
-
-;; Read using our custom readtable
 (define (read-with-table port readtable)
 	(parameterize ([current-readtable readtable])
 		(racket-read port)))
 
-;; Custom readtable with Clojure-style literals
 (define clojure-readtable
 	(make-readtable #f
 									#\[ 'terminating-macro read-bracket
@@ -175,6 +161,20 @@
 			[(cons #\space rest)
 			 (error (format "Line ~a: Indentation Error. TABS ONLY." line-num))]
 			[_ count])))
+
+;; Check if a line ends with \ (line continuation marker)
+;; Returns #t if the line ends with backslash (possibly followed by whitespace)
+(define (line-continues? str)
+	(let ([trimmed (string-trim str #:left? #f)])
+		(and (> (string-length trimmed) 0)
+				 (char=? (string-ref trimmed (sub1 (string-length trimmed))) #\\))))
+
+;; Strip the trailing backslash from a continuation line
+(define (strip-continuation str)
+	(let ([trimmed (string-trim str #:left? #f)])
+		(if (line-continues? trimmed)
+				(substring trimmed 0 (sub1 (string-length trimmed)))
+				str)))
 
 ;; Helper: Check if a symbol is a keyword (starts with : and has more chars)
 ;; Note: bare ":" is NOT a keyword (used for type annotations in typed racket)
@@ -213,6 +213,45 @@
 		[(pair? v)
 		 ;; Not an infix expression, but still recurse into sub-expressions
 		 (map transform-infix v)]
+		[else v]))
+
+;; Transform type annotations: (A B C ~-> R) -> (-> A B C R)
+;; When ~-> is the second-to-last element, move it to front as ->
+;; This makes (Integer String ~-> Boolean) become (-> Integer String Boolean)
+(define (transform-type-arrow v)
+	(cond
+		[(and (pair? v)
+					(>= (length v) 3)  ; Need at least (A ~-> R)
+					(let ([second-to-last (list-ref v (- (length v) 2))])
+						(and (symbol? second-to-last)
+								 (equal? second-to-last '~->))))
+		 ;; Transform: (A B ... ~-> R) -> (-> A B ... R)
+		 (let* ([len (length v)]
+						[args (map transform-type-arrow (take v (- len 2)))]  ; All but last two
+						[return-type (transform-type-arrow (list-ref v (- len 1)))])  ; Last element
+			 (cons '-> (append args (list return-type))))]
+		[(pair? v)
+		 ;; Not a type arrow, but still recurse into sub-expressions
+		 (map transform-type-arrow v)]
+		[else v]))
+
+;; Transform a top-level expression, applying type-arrow transform to type annotations
+;; Detects (: name type-expr) pattern and transforms type-expr specially
+(define (transform-with-type-awareness v)
+	(cond
+		[(and (pair? v)
+					(>= (length v) 3)
+					(eq? (car v) ':))
+		 ;; This is a type annotation (: name type-expr)
+		 ;; Apply type-arrow transform to the type expression (third element)
+		 (let ([colon (car v)]
+					 [name (cadr v)]
+					 [type-expr (transform-type-arrow (caddr v))]
+					 [rest (cdddr v)])  ; Any additional elements (shouldn't be any)
+			 (cons colon (cons name (cons type-expr rest))))]
+		[(pair? v)
+		 ;; Not a type annotation at top level, recurse but keep looking
+		 (map transform-with-type-awareness v)]
 		[else v]))
 
 ;; Helper: Auto-quote keywords (symbols starting with :) to make them self-evaluating
@@ -268,20 +307,6 @@
 						 (loop siblings (cons expr acc))]
 						[else (error "Indentation gap error.")])))))
 
-;; Check if a line ends with \ (line continuation marker)
-;; Returns #t if the line ends with backslash (possibly followed by whitespace)
-(define (line-continues? str)
-	(let ([trimmed (string-trim str #:left? #f)])
-		(and (> (string-length trimmed) 0)
-				 (char=? (string-ref trimmed (sub1 (string-length trimmed))) #\\))))
-
-;; Strip the trailing backslash from a continuation line
-(define (strip-continuation str)
-	(let ([trimmed (string-trim str #:left? #f)])
-		(if (line-continues? trimmed)
-				(substring trimmed 0 (sub1 (string-length trimmed)))
-				str)))
-
 ;; Read a possibly multi-line logical line (handling \ continuation)
 ;; Returns: (values complete-line-string line-number lines-consumed)
 ;; Continuation lines have ALL leading whitespace stripped (for visual alignment flexibility)
@@ -309,20 +334,52 @@
 					(loop (cons (line (count-indent raw line-num) (tokenize-line raw) line-num) lines)
 								(+ idx lines-consumed))))))
 
-;; --- The Reader Interface ---
-
 (define (read in)
-	(let ([lines (read-all-lines in)])
-		;; Apply infix transform after parsing (when lists are formed)
-		(map transform-infix (parse-block lines 0))))
+	(let* ([lines (read-all-lines in)]
+				 [parsed (parse-block lines 0)]
+				 ;; Apply type-aware transform first (handles ~-> in type annotations)
+				 ;; Then apply general infix transform (handles ~+ etc in code)
+				 [type-transformed (map transform-with-type-awareness parsed)]
+				 [fully-transformed (map transform-infix type-transformed)])
+		fully-transformed))
 
 (define (read-syntax src in)
 	(let* ([lines (read-all-lines in)]
-				 ;; Apply infix transform after parsing (when lists are formed)
-				 [body (map transform-infix (parse-block lines 0))])
-		;; Wrap the parsed body in a module definition
-		;; Include tab-racket bindings (HAMT, etc.)
+				 [parsed (parse-block lines 0)]
+				 ;; Apply type-aware transform first (handles ~-> in type annotations)
+				 ;; Then apply general infix transform (handles ~+ etc in code)
+				 [type-transformed (map transform-with-type-awareness parsed)]
+				 [body (map transform-infix type-transformed)])
+		;; Wrap in typed/racket module with require/typed for persistent structures
 		(datum->syntax #f
-									 `(module anonymous racket
-											(require tab-racket/main)
+									 `(module anonymous typed/racket
+											(require/typed racket-sugar/main
+												;; HAMT types
+												[empty-hamt (-> Any)]
+												[hamt (-> Any * Any)]
+												[hamt? (-> Any Boolean)]
+												[hamt-empty? (-> Any Boolean)]
+												[hamt-contains? (-> Any Any Boolean)]
+												[hamt-ref (->* (Any Any) (Any) Any)]
+												[hamt-set (-> Any Any Any Any)]
+												[hamt-remove (-> Any Any Any)]
+												[hamt-count (-> Any Integer)]
+												[hamt->list (-> Any (Listof (Pairof Any Any)))]
+												[list->hamt (-> (Listof (Pairof Any Any)) Any)]
+												[hamt-keys (-> Any (Listof Any))]
+												[hamt-values (-> Any (Listof Any))]
+												;; PVector types
+												[empty-pvector (-> Any)]
+												[pvector (-> Any * Any)]
+												[pvector? (-> Any Boolean)]
+												[pvector-empty? (-> Any Boolean)]
+												[pvector-ref (->* (Any Integer) (Any) Any)]
+												[pvector-set (-> Any Integer Any Any)]
+												[pvector-push (-> Any Any Any)]
+												[pvector-pop (-> Any Any)]
+												[pvector-length (-> Any Integer)]
+												[pvector->list (-> Any (Listof Any))]
+												[pvector->vector (-> Any (Vectorof Any))]
+												[list->pvector (-> (Listof Any) Any)]
+												[vector->pvector (-> (Vectorof Any) Any)])
 											,@body))))

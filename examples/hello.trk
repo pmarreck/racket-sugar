@@ -1,2 +1,2 @@
-#lang tab-racket
+#lang racket-sugar
 displayln "Hello, tabs!"

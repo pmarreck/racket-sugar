@@ -1,33 +1,35 @@
 # PLAN
 
-## In flight (2026-06-09)
+## Done (2026-06-09 EST)
 
-### Issue 3 — direnv hang (racket source build) — FIX APPLIED, verifying
-- [x] Diagnose: `direnv allow` was compiling racket-8.18 from source (no darwin binary
-      cache for nixos-unstable / 25.05). Confirmed via narinfo 404.
-- [x] Find cached racket: `nixos-24.11` → racket-8.14, narinfo 200, full closure fetch-only.
-- [x] Repin `flake.nix` nixpkgs → `nixos-24.11`; `nix flake update nixpkgs`.
-- [ ] Materialize racket in store (`nix develop`), confirm `direnv allow` is fast.
+### Issue 3 — direnv hang (racket source build) — FIXED
+- [x] Diagnosed: `direnv allow` was compiling racket-8.18 from source (no aarch64-darwin
+      binary cache for nixos-unstable / 25.05; narinfo 404).
+- [x] Found cached racket: `nixos-24.11` → racket-8.14 (narinfo 200, full closure fetch-only).
+- [x] Repinned `flake.nix` nixpkgs → `nixos-24.11`; `nix flake update nixpkgs`.
+- [x] Materialized racket from cache; `direnv allow` / `nix develop` now fast (download).
 
-### Establish green baseline (blocked on racket download)
-- [ ] `raco test tests` → record pass/fail before any rename.
+### Test runner — FIXED (was broken out of the box)
+- [x] `./test` now sets `PLTCOLLECTS=$(pwd):` so the in-repo collection resolves,
+      runs via `nix develop`, uses `set -u` (not `set -e`), and excludes benchmarks
+      (`*-bench.rkt`, `perf-test.rkt` which needs the external `pfds` pkg).
 
-### Issue 1 — rename tab-racket → racket-sugar
-Decision: Racket collection / `#lang` = `racket-sugar` (hyphen, Racket-idiomatic).
-Repo directory stays `racket_sugar` (underscore = project identifier). `.trk` ext KEPT.
-- [ ] Rename collection dir `tab-racket/` → `racket-sugar/`.
-- [ ] Update `info.rkt` collection name.
-- [ ] Update all `#lang tab-racket` / `#lang tab-racket/typed` in examples, tests, README.
-- [ ] Update `flake.nix` pname + description.
-- [ ] Update docs (PROJECT_PLAN.md, HAMT_*.md) and test filenames referencing tab-racket.
-- [ ] `raco test tests` → green again after rename.
+### Issue 1 — rename collection/#lang tab-racket → racket-sugar — DONE
+- [x] Renamed dir `tab-racket/` → `racket-sugar/`; `tests/tab-racket-test.rkt`
+      → `tests/racket-sugar-test.rkt`.
+- [x] Replaced all 22 `tab-racket` occurrences → `racket-sugar` (info.rkt, flake pname,
+      examples, tests, README, docs). Repo dir stays `racket_sugar` (project identifier).
+- [x] Tests green after rename (68+7+38+16+7+8+2, zero failures).
 
-### Issue 2 — README infix examples
-Decision: weave `~func` infix into marquee/gallery examples (keep existing section).
-Convert binary prefix ops only: `(+ 1 2)`→`1 ~+ 2`, `(= n 0)`→`(n ~= 0)`, `(- n 1)`→`(n ~- 1)`.
-Structural forms (cond/define/if/let) stay prefix.
-- [ ] Convert intro example, Fibonacci, Conditionals, Let, Word-freq examples.
+### Issue 2 — README infix examples — DONE
+- [x] Wove `~func` infix into marquee, Fibonacci, Conditionals, Let, Word-freq, and
+      Typed-fib examples (binary ops only; structural forms stay prefix). Each converted
+      snippet was executed and verified (fib→55, abs→5, let→30, typed fib→55).
 
-### Peter's extra ask — benchmark racket vs zig
-- [ ] Once racket is up, time an example algorithm (e.g. fibonacci) vs a zig equivalent
-      with hyperfine. Report numbers; do not over-engineer.
+## Open / optional
+- [ ] Peter's extra ask: benchmark racket-sugar vs zig for an example algorithm
+      (e.g. fibonacci) with hyperfine. Not yet done — awaiting go-ahead / which algorithm.
+- [ ] flake `packages.default` has a pre-existing bug (`cp -r src` but there is no `src/`);
+      unrelated to dev workflow. Fix if a buildable package output is wanted.
+- [ ] racket pinned to 8.14 (cached) not latest 8.18 (uncached on darwin). Revisit if an
+      8.15+ feature is needed.

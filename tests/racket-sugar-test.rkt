@@ -2,7 +2,7 @@
 
 (require rackunit
 									rackunit/text-ui
-									tab-racket/main
+									racket-sugar/main
 									(prefix-in hamt: "../hamt/main.rkt"))
 
 ;; Helper to parse a string through the reader
@@ -533,7 +533,7 @@
 
 (define all-tests
 		(test-suite
-			"All tab-racket Tests"
+			"All racket-sugar Tests"
 			basic-parsing-tests
 			function-tests
 			control-flow-tests

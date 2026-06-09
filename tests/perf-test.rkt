@@ -1,6 +1,6 @@
 #lang racket
 
-;; Performance benchmark suite for tab-racket data structures
+;; Performance benchmark suite for racket-sugar data structures
 ;; Tests O-notation behavior by measuring time at different scales
 ;; Logs results to TSV file with % diff from previous run
 

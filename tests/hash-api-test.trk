@@ -1,7 +1,7 @@
-#lang tab-racket
+#lang racket-sugar
 
 ;; Test HAMT API with {} syntax
-;; tab-racket exports hamt-ref, hamt-set, etc.
+;; racket-sugar exports hamt-ref, hamt-set, etc.
 
 define m {"name" "Alice" "age" 30}
 
