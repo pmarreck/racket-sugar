@@ -27,3 +27,6 @@ CLAUDE*.md
 # compiled benchmark binaries
 benchmarks/**/quicksort_zig
 *.o
+
+# BEAM/Erlang crash dumps (from elixir benchmark runs)
+erl_crash.dump

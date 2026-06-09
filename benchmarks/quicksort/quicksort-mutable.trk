@@ -1,0 +1,48 @@
+#lang racket-sugar
+
+;; In-place quicksort over a MUTABLE Racket vector (Lomuto partition). Same algorithm
+;; class as the Zig version — included to isolate the cost of immutability/allocation
+;; from the runtime itself (compare against quicksort.trk's functional list sort).
+
+define (swap! v i j)
+	let ((t (vector-ref v i)))
+		vector-set! v i (vector-ref v j)
+		vector-set! v j t
+
+define (partition! v lo hi)
+	let ((pivot (vector-ref v hi)))
+		let loop ((i lo) (j lo))
+			cond
+				(>= j hi)
+					swap! v i hi
+					i
+				(< (vector-ref v j) pivot)
+					swap! v i j
+					loop (+ i 1) (+ j 1)
+				else
+					loop i (+ j 1)
+
+define (qsort! v lo hi)
+	when (< lo hi)
+		let ((p (partition! v lo hi)))
+			qsort! v lo (- p 1)
+			qsort! v (+ p 1) hi
+
+define n (string->number (vector-ref (current-command-line-arguments) 0))
+define v (make-vector n 0)
+
+;; fill with the same MINSTD sequence used by the other implementations
+let loop ((i 0) (x 42))
+	when (< i n)
+		let ((nx (modulo (* 48271 x) 2147483647)))
+			vector-set! v i nx
+			loop (+ i 1) nx
+
+qsort! v 0 (- n 1)
+
+;; same order-dependent checksum
+displayln
+	let loop ((i 0) (acc 0))
+		if (>= i n)
+			acc
+			loop (+ i 1) (modulo (+ acc (* (+ i 1) (vector-ref v i))) 1000000007)

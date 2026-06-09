@@ -51,10 +51,16 @@ opts a block out (illustrative examples with placeholder identifiers).
 - [ ] Add sugar to change the comment char from `;` to `//` (or `#`, but `#` collides
       with `#lang`/`#rx`/`#t`). Peter: "what the hell were they thinking?" re Lisp `;`.
 
-## Done (2026-06-09 EST) — racket-sugar vs Zig benchmark + "Why Racket?"
-- [x] Rosetta-Code quicksort in both langs: benchmarks/quicksort/{quicksort.trk,
-      quicksort.zig}, identical MINSTD input + order-dependent checksum cross-check.
-      Results: zig 8.6x faster (n=1M) / 7.9x (n=3M) total; ~6-7x sort-only. ./bench runner.
+## Done (2026-06-09 EST) — quicksort benchmark suite + "Why Racket?"
+- [x] Rosetta-Code quicksort, now FOUR implementations cross-checked by identical
+      MINSTD input + order-dependent checksum: zig (in-place), racket-sugar mutable
+      vector, racket-sugar immutable list, Elixir list. ./bench runs all four.
+- [x] n=1M results: zig 61ms / racket-mutable 268ms (2.1x sort) / racket-immutable
+      522ms (6.9x sort) / elixir 677ms. Immutability tax in Racket ~2x total, ~3.3x
+      sort-only. Elixir slowest on TOTAL (266ms BEAM boot) but its sort ~= racket's.
+- [x] Q1 answered: raco make = .zo bytecode not native; ~150ms startup is library
+      instantiation (69ms boot -> 79ms racket/base -> 151ms full racket). Documented.
+- [x] Fixed zig to write checksum to stdout (was std.debug.print -> stderr).
 - [x] Added "Why Racket?" section to README (language-oriented programming pitch,
       cites the benchmark + the fact racket-sugar exists in-ecosystem).
 

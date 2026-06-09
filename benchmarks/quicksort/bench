@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Reproducible quicksort benchmark: racket-sugar (functional list) vs Zig (in-place).
+# Reproducible quicksort benchmark across implementations:
+#   - Zig (in-place array, native ReleaseFast)
+#   - racket-sugar mutable vector (in-place)
+#   - racket-sugar immutable list (functional, allocating)
+#   - Elixir immutable list (functional) -- skipped if `elixir` is absent
 # Usage: ./benchmarks/quicksort/bench [N]   (default N=1000000)
 set -u
 cd "$(dirname "$0")/../.."          # repo root
@@ -9,18 +13,36 @@ exec nix develop --command bash -c '
 	set -u
 	export PLTCOLLECTS="$PWD:"
 	N='"$N"'
-	# build Zig (ReleaseFast) and precompile the .trk so we time execution, not builds
+
+	# Build/precompile so we time execution, not builds.
 	zig build-exe benchmarks/quicksort/quicksort.zig -O ReleaseFast \
 		-femit-bin=benchmarks/quicksort/quicksort_zig
-	raco make benchmarks/quicksort/quicksort.trk >/dev/null
+	raco make benchmarks/quicksort/quicksort.trk benchmarks/quicksort/quicksort-mutable.trk >/dev/null
 
-	# correctness cross-check: identical order-dependent checksum
-	rk=$(racket benchmarks/quicksort/quicksort.trk "$N")
-	zg=$(./benchmarks/quicksort/quicksort_zig "$N")
-	echo "checksum  racket-sugar=$rk  zig=$zg  match=$([ "$rk" = "$zg" ] && echo YES || echo NO)"
-	[ "$rk" = "$zg" ] || { echo "CHECKSUM MISMATCH"; exit 1; }
+	# Correctness cross-check: every implementation must agree on the checksum.
+	ref=$(./benchmarks/quicksort/quicksort_zig "$N")
+	for cmd in \
+		"racket benchmarks/quicksort/quicksort.trk" \
+		"racket benchmarks/quicksort/quicksort-mutable.trk"; do
+		got=$($cmd "$N")
+		[ "$got" = "$ref" ] || { echo "CHECKSUM MISMATCH: $cmd -> $got (want $ref)"; exit 1; }
+	done
+	have_elixir=0
+	if command -v elixir >/dev/null 2>&1; then
+		got=$(elixir benchmarks/quicksort/quicksort.exs "$N")
+		[ "$got" = "$ref" ] || { echo "CHECKSUM MISMATCH: elixir -> $got (want $ref)"; exit 1; }
+		have_elixir=1
+	fi
+	echo "checksum=$ref (all implementations agree)"
 
-	hyperfine --warmup 3 -N \
-		--command-name "racket-sugar (n=$N)" "racket benchmarks/quicksort/quicksort.trk $N" \
-		--command-name "zig ReleaseFast (n=$N)" "./benchmarks/quicksort/quicksort_zig $N"
+	args=(--warmup 3 -N
+		--command-name "Zig (in-place array, native)"  "./benchmarks/quicksort/quicksort_zig $N"
+		--command-name "racket-sugar (mutable vector)" "racket benchmarks/quicksort/quicksort-mutable.trk $N"
+		--command-name "racket-sugar (immutable list)" "racket benchmarks/quicksort/quicksort.trk $N")
+	if [ "$have_elixir" = 1 ]; then
+		args+=(--command-name "Elixir (immutable list)" "elixir benchmarks/quicksort/quicksort.exs $N")
+	else
+		echo "(elixir not found -- skipping Elixir benchmark)"
+	fi
+	hyperfine "${args[@]}"
 '

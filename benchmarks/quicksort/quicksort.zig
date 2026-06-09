@@ -29,7 +29,7 @@ fn lessThan(a: i64, b: i64) bool {
     return a < b;
 }
 
-// Zig 0.16 "Juicy Main": args + arena arrive via std.process.Init.
+// Zig 0.16 "Juicy Main": args + arena + io arrive via std.process.Init.
 pub fn main(init: std.process.Init) !void {
     const a = init.arena.allocator();
     const args = try init.minimal.args.toSlice(a);
@@ -49,5 +49,10 @@ pub fn main(init: std.process.Init) !void {
     for (arr, 0..) |v, i| {
         acc = (acc + (@as(u64, @intCast(i + 1)) * @as(u64, @intCast(v)))) % 1000000007;
     }
-    std.debug.print("{d}\n", .{acc});
+
+    var buf: [64]u8 = undefined;
+    var w = std.Io.File.stdout().writer(init.io, &buf);
+    const stdout = &w.interface;
+    try stdout.print("{d}\n", .{acc});
+    try stdout.flush();
 }
