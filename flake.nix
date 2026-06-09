@@ -19,7 +19,10 @@
 				version = "0.0.1";
 				src = ./.;
 				buildInputs = [ pkgs.racket ];
-				installPhase = "mkdir -p $out/src && cp -r src $out/src";
+				installPhase = ''
+					mkdir -p $out
+					cp -r racket-sugar $out/
+				'';
 			};
 
 			devShells.default = pkgs.mkShell {
